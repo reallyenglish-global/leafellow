@@ -4,6 +4,10 @@
 
 Create original brand assets, renderer, validation, public-safe brief, Apache code license and separate brand terms. No production changes or working-reader claims.
 
+## 0a. Shared annotation core — first implementation slice
+
+Create private EPUB/PDF annotations with versioned serialization, source-identity checks, owned selection data and validated PDF page coordinates. Develop through observed RED/GREEN cycles; see [contract and evidence](annotation-core.md). Domain unit tests are not renderer, storage or device tests.
+
 ## 1. Requirements and bounded feasibility
 
 Required targets are web, Android and iOS, not optional later ports. Choose an authorized file, platform test matrix and provider route; see [cross-platform architecture](cross-platform.md). Agree a time box and stop criteria. Test at least ten representative passages including equations if relevant. Every stored target must return to the intended passage after restart and supported layout changes; uncertainty must be shown rather than silently substituted. For PDFs, test coordinates/zoom rather than inappropriate reflow.
