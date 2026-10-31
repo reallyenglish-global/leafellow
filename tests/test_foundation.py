@@ -107,7 +107,7 @@ class FoundationTests(unittest.TestCase):
 
     def test_local_markdown_links_resolve(self):
         for path in ROOT.rglob('*.md'):
-            if '.git' in path.parts:
+            if {'.git', 'node_modules'} & set(path.parts):
                 continue
             for target in re.findall(r'!?\[[^\]]*\]\(([^)]+)\)',path.read_text()):
                 if target.startswith(('https://','http://','#','mailto:')):
@@ -117,7 +117,7 @@ class FoundationTests(unittest.TestCase):
     def test_no_private_content_or_books_in_project(self):
         forbidden = ['/home/', '/mnt/', 'life-os/', 'BWS_ACCESS_TOKEN']
         for path in ROOT.rglob('*'):
-            if not path.is_file() or '.git' in path.parts or '__pycache__' in path.parts:
+            if not path.is_file() or {'.git', 'node_modules', '__pycache__'} & set(path.parts):
                 continue
             self.assertNotIn(path.suffix, {'.epub','.pdf','.pem','.key'})
             if path == Path(__file__):

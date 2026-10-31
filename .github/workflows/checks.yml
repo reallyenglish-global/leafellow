@@ -1,4 +1,4 @@
-name: Foundation checks
+name: Foundation and core checks
 on:
   push:
   pull_request:
@@ -7,9 +7,31 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Validate brand assets and project foundation
         run: python3 -m unittest discover -s tests -v
       - name: Check whitespace
-        run: git diff --check HEAD
+        run: git diff-tree --check --root HEAD
+  core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [24, 26]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - name: Install locked development dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Type-check shared domain code
+        run: npm run typecheck
+      - name: Test annotation contracts
+        run: npm test
+      - name: Audit installed dependencies
+        run: npm audit --audit-level=high
