@@ -8,7 +8,7 @@ An open-source reading companion for understanding difficult passages, bridging 
 
 ## Status
 
-**Early project foundation — not a working ereader yet.** This repository contains the initial brand identity, renderer, validation tests, product brief, gated roadmap and a first shared TypeScript annotation core. The core creates/validates private EPUB/PDF records and serializes/restores them against the expected source identity. There is no mobile application, provider login, inference integration, ebook parser, sync service or social backend yet. Assets are an initial design for review, not trademark clearance.
+**Early project foundation — not a working ereader yet.** This repository contains the initial brand identity, renderer, validation tests, product brief, gated roadmap and a first shared TypeScript annotation core. The core creates/validates private EPUB/PDF records and serializes/restores them against the expected source identity. A first local-byte EPUB/PDF import adapter now parses generated test documents, extracts ordered text and returns source-bound text-range selections. There is no reader UI, mobile application, provider login, inference integration, sync service or social backend yet. Assets are an initial design for review, not trademark clearance.
 
 ## The idea
 
@@ -25,13 +25,14 @@ The first learning scenario is technical reading with gaps in mathematics. Other
 - [Required EPUB and PDF format scope](docs/formats.md)
 - [Initial delivery contract](docs/kickoff.md)
 - [Annotation core: first TDD slice and observed evidence](docs/annotation-core.md)
+- [Document import: real-byte parsing, safety limits and TDD evidence](docs/document-import.md)
 - [Brand guidelines](brand/README.md)
 - [Contribution guide](CONTRIBUTING.md)
 - [Security reporting](SECURITY.md)
 
 ## Check the foundation and annotation core
 
-Use Node.js 24+ and Python 3.10+. Runtime domain code has no dependencies; TypeScript is a locked development dependency.
+Use Node.js 24+ and Python 3.10+. The annotation core has no runtime dependencies. The document-import adapter uses pinned parsing/hashing dependencies; TypeScript is a locked development dependency.
 
 ```sh
 npm ci --ignore-scripts
@@ -40,7 +41,7 @@ npm test
 python3 -m unittest discover -s tests -v
 ```
 
-GitHub Actions checks the Python foundation and runs annotation tests/type checks on Node 24 and 26. These checks do not establish browser rendering or native device compatibility.
+GitHub Actions checks the Python foundation and runs annotation/import tests and type checks on Node 24 and 26. These checks do not establish browser rendering or native device compatibility.
 
 Rebuild the brand assets (Python 3.10+, Cairo system library, and a local Lato Semibold font):
 

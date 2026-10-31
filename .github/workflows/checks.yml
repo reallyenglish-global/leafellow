@@ -31,7 +31,7 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Type-check shared domain code
         run: npm run typecheck
-      - name: Test annotation contracts
+      - name: Test annotation and document-import contracts
         run: npm test
       - name: Audit installed dependencies
         run: npm audit --audit-level=high
