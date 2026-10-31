@@ -1,0 +1,29 @@
+# Gated roadmap
+
+## 0. Foundation — current slice
+
+Create original brand assets, renderer, validation, public-safe brief, Apache code license and separate brand terms. No production changes or working-reader claims.
+
+## 1. Requirements and bounded feasibility
+
+Choose device, authorized file and provider route. Agree a time box and stop criteria. Test at least ten representative passages including equations if relevant. Every stored target must return to the intended passage after restart and supported layout changes; uncertainty must be shown rather than silently substituted. For PDFs, test coordinates/zoom rather than inappropriate reflow.
+
+Record equation selection representation (plain text, MathML/LaTeX, image or none). Preview must not silently corrupt symbols. OCR/image support, if necessary, needs explicit provider/privacy/rights scope. Inspect import safety before opening untrusted files.
+
+Demonstrate one permitted provider request, cancel, denied/expired auth, no-network behavior and no silent billing fallback. Known/unknown cost and quota status must be honest. A failure means change engine/route, reduce scope or pause—not quietly bypass the gate.
+
+## 2. Personal reading vertical slice
+
+Import → read → highlight → context preview → explanation/bridge → private annotation → return → offline resume/export. One format and one provider. Test anchors, partial AI output, hostile imports, consent, secrets, restart and restore. Run on target hardware; a screenshot is not proof of the experience.
+
+## 3. Learning evidence and optional sharing
+
+Reviewed foundation examples, learner-controlled concepts and delayed unaided checks. Try voluntary export of a short question to one partner with rights/audience preview. Do not export private chat history or whole books. No autonomous reading of partner replies.
+
+## 4. Sync and invite-only reading rooms
+
+Resolve conflicts, tombstones, deletion/backup retention and explicit publishing. Same-edition anchors first; defer cross-edition matching. Before invitations: moderation owner, adult pilot policy, report/block, takedown and server-side access tests, including revoked members and cross-room denial.
+
+## 5. Distribution
+
+Recheck provider terms, accessibility, import security, privacy, licenses, app-store obligations and costs. Public source publication is not approval for a hosted service or commercial release.

@@ -1,0 +1,15 @@
+# Local environments and secrets
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.DS_Store
+node_modules/
+# Private reading content is never part of this repository
+*.epub
+*.pdf
+*.key
+*.pem
