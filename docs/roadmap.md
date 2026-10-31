@@ -6,7 +6,7 @@ Create original brand assets, renderer, validation, public-safe brief, Apache co
 
 ## 1. Requirements and bounded feasibility
 
-Choose device, authorized file and provider route. Agree a time box and stop criteria. Test at least ten representative passages including equations if relevant. Every stored target must return to the intended passage after restart and supported layout changes; uncertainty must be shown rather than silently substituted. For PDFs, test coordinates/zoom rather than inappropriate reflow.
+Required targets are web, Android and iOS, not optional later ports. Choose an authorized file, platform test matrix and provider route; see [cross-platform architecture](cross-platform.md). Agree a time box and stop criteria. Test at least ten representative passages including equations if relevant. Every stored target must return to the intended passage after restart and supported layout changes; uncertainty must be shown rather than silently substituted. For PDFs, test coordinates/zoom rather than inappropriate reflow.
 
 Record equation selection representation (plain text, MathML/LaTeX, image or none). Preview must not silently corrupt symbols. OCR/image support, if necessary, needs explicit provider/privacy/rights scope. Inspect import safety before opening untrusted files.
 
@@ -14,7 +14,7 @@ Demonstrate one permitted provider request, cancel, denied/expired auth, no-netw
 
 ## 2. Personal reading vertical slice
 
-Import → read → highlight → context preview → explanation/bridge → private annotation → return → offline resume/export. One format and one provider. Test anchors, partial AI output, hostile imports, consent, secrets, restart and restore. Run on target hardware; a screenshot is not proof of the experience.
+Import → read → highlight → context preview → explanation/bridge → private annotation → return → offline resume/export. Both EPUB and PDF across web, Android and iOS, with one permitted provider initially. Individual feasibility tasks may isolate formats, but a single-format result is not acceptance of the agreed core reader scope. See [format scope](formats.md). Test anchors, partial AI output, hostile imports, consent, secrets, restart and restore. Run on target hardware; a screenshot is not proof of the experience.
 
 ## 3. Learning evidence and optional sharing
 

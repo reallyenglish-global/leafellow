@@ -8,15 +8,21 @@
 - Initial identity: original leaf/book symbol, forest/paper/sage palette, first design for review.
 - No private planning notes or raw review transcripts published.
 
+## Confirmed platform scope
+
+- Web, Android and iOS are all required. No platform has been implemented or device-tested yet.
+- EPUB and PDF are both required on all three platforms; see [format scope and acceptance](formats.md).
+- See the [cross-platform architecture proposal](cross-platform.md).
+
 ## Proposed, not settled
 
-- React Native + TypeScript, conditional on native reader capability, equations, durable anchors, accessibility and target device.
+- React Native + Expo + TypeScript + Expo Router, with React Native Web and platform-specific reader/storage/auth adapters. Conditional on reader/math/anchor/accessibility feasibility across all three targets.
 - Readium as a candidate, not assumed cross-format/platform parity. Compare Flutter/native options against actual requirements.
 - Personal vertical slice before sync/social infrastructure; test one-partner sharing cheaply.
 
 ## Open decisions before mobile implementation
 
-1. Primary device and the first actual book/paper/file; EPUB versus PDF/math requirements.
+1. Representative authorized EPUB and PDF files, launch scope for scanned/protected/fixed-layout material, and the browser/device test matrix across required web, Android and iOS targets.
 2. A permitted provider route and budget. Open-source distribution alone does not prove provider eligibility or mobile OAuth feasibility.
 3. Whether a limited, explicitly opted-in API alternative is acceptable if subscription integration is unavailable.
 4. Trusted maths reviewer/reference and the first delayed independent learning check.

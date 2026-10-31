@@ -21,6 +21,8 @@ The first learning scenario is technical reading with gaps in mathematics. Other
 - [Product brief](docs/product.md)
 - [Roadmap and feasibility gates](docs/roadmap.md)
 - [Architecture decisions](docs/decisions.md)
+- [Web, Android and iOS architecture proposal](docs/cross-platform.md)
+- [Required EPUB and PDF format scope](docs/formats.md)
 - [Initial delivery contract](docs/kickoff.md)
 - [Brand guidelines](brand/README.md)
 - [Contribution guide](CONTRIBUTING.md)
