@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-import { importDocument, type ImportedDocument } from '../documents.ts';
+import { importEpubDocument } from '../epub/import-document.ts';
+import type { ImportedDocument } from '../document-types.ts';
 
 export const MAX_EPUB_BYTES = 2 * 1024 * 1024;
 
@@ -12,7 +13,7 @@ export function validateEpubFile(name: string, size: number | null): void {
 }
 
 export async function inspectEpub(bytes: Uint8Array): Promise<ImportedDocument> {
-  const document = await importDocument(bytes);
+  const document = importEpubDocument(bytes);
   if (document.format !== 'epub') throw new Error('The selected file is not an EPUB.');
   return document;
 }
