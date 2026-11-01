@@ -369,7 +369,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
 
   return (
     <View style={[styles.readerScreen, { paddingBottom: insets.bottom }]}>
-      <View style={[styles.readerHeader, { paddingTop: 12 + insets.top }]}>
+      <View style={[styles.readerHeader, { paddingTop: insets.top, paddingBottom: 12 }]}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={closing ? 'Finishing saves before returning to library'
@@ -731,7 +731,7 @@ const styles = StyleSheet.create({
   clearButtonText: { color: '#5D6D60', fontSize: 13, textDecorationLine: 'underline' },
   footer: { color: '#5D6D60', fontSize: 13, textAlign: 'center' },
   readerScreen: { flex: 1, backgroundColor: '#F7F3E8' },
-  readerHeader: { minHeight: 70, paddingHorizontal: 16, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#173F35' },
+  readerHeader: { minHeight: 70, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#173F35' },
   backButton: { paddingVertical: 8, paddingRight: 4 },
   backText: { color: '#F7F3E8', fontSize: 15, fontWeight: '600' },
   bookTitle: { flex: 1, color: '#F7F3E8', fontSize: 15, fontWeight: '600' },
