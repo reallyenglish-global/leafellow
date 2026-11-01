@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+// The test script sets NODE_OPTIONS=--experimental-vm-modules because @noble/hashes (imported by the core) is
+// ESM-only and Jest cannot load it otherwise; the inline env syntax in that script is POSIX-only.
 module.exports = {
   preset: 'jest-expo',
   // Core modules under src/ import each other with explicit .ts extensions.

@@ -50,6 +50,8 @@ jobs:
           java -version
       - name: Generate the Android project from Expo config
         run: pnpm --filter @leafellow/mobile exec expo prebuild --platform android --no-install
+      - name: Lint after native generation
+        run: pnpm --filter @leafellow/mobile lint
       - name: Assemble Release APK for the emulator ABI
         working-directory: apps/mobile/android
         run: ./gradlew assembleRelease -PreactNativeArchitectures=x86_64 --max-workers=2 --no-daemon
