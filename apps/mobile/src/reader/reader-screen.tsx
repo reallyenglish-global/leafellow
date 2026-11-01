@@ -11,6 +11,7 @@ import { createHighlightSession } from '../../../../src/storage/highlight-sessio
 import { createSerialWriter } from '../../../../src/storage/serial-writes';
 import { ExportCard } from './export-card';
 import { HighlightPanel } from './highlight-panel';
+import { latestNotice, useNoticeOrder, useOrderedNotice } from './notice-order';
 import { MOSS, READER_THEME, styles } from './reader-theme';
 import { SelectionCard } from './selection-card';
 import { useExportFlow } from './use-export-flow';
@@ -34,8 +35,9 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
   const [selection, setSelection] = useState<PendingSelection | null>(null);
   const [selectionNotice, setSelectionNotice] = useState('');
   const [error, setError] = useState('');
-  // The notice for a tapped mark; save, delete and go-to messages come from their hooks.
-  const [pressNotice, setPressNotice] = useState('');
+  // One notice line shows the newest of: a tapped mark, a go-to result, a save or delete.
+  const noticeOrder = useNoticeOrder();
+  const [pressNotice, setPressNotice] = useOrderedNotice(noticeOrder);
   const [showHighlights, setShowHighlights] = useState(false);
   const [closing, setClosing] = useState(false);
   // Bumped on every engine onReady, including WebView reloads, which drop all drawn marks.
@@ -48,8 +50,8 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
   const [session] = useState(() => createHighlightSession(db, book.id, writer));
   const active = useRef(true);
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
-  const { highlights, listState, saving, deletingId, ...saved } = useHighlights(session, active);
-  const passage = usePassageJump(reader, active);
+  const { highlights, listState, saving, deletingId, ...saved } = useHighlights(session, active, noticeOrder);
+  const passage = usePassageJump(reader, active, noticeOrder);
   const { markError, reset: resetMarks } = useReaderMarks(readerRef, highlights, readyGeneration);
   const exporter = useExportFlow({ session, book, active, writer });
   const position = useReadingPosition(db, writer, book, active);
@@ -66,8 +68,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
   // Every action that used to clear the shared message line clears each source (go-to clears its own
   // only when it acts, so the screen clears the rest after it).
   function clearMessages() { setPressNotice(''); saved.clearMessages(); passage.clearMessages(); }
-  // One notice line, as before the split: a tapped mark, then a go-to result, then a save or delete.
-  const notice = pressNotice || passage.notice || saved.notice;
+  const notice = latestNotice(pressNotice, passage.noticeEntry, saved.noticeEntry);
 
   function handleReady(location: { start?: { href?: string } } | undefined) {
     currentHref.current = location?.start?.href ?? null;

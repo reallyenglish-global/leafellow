@@ -2,7 +2,7 @@
 import { AppState } from 'react-native';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 
-import { latestReaderProps, makeBook, openTestDatabase, resetEngineMock } from './engine-mock';
+import { latestReaderProps, makeBook, mockReader, openTestDatabase, resetEngineMock } from './engine-mock';
 import { loadLastReadingPosition } from '../../../../../src/storage/reading-position';
 import { saveHighlight } from '../../../../../src/storage/saved-highlights';
 import { systemFolderDestination } from '../../highlight-export-destination';
@@ -98,6 +98,38 @@ test('a running export blocks save, delete and close until it settles', async ()
   expect(await screen.findByText('Export cancelled. No file was created.')).toBeTruthy();
   expect(screen.getByTestId('save-highlight')).toBeEnabled();
   expect(screen.getByTestId('reader-back')).toBeEnabled();
+});
+
+test('the newest notice wins when a delete settles after a go-to confirms', async () => {
+  const db = await openTestDatabase();
+  const book = makeBook();
+  await saveHighlight(db, { documentId: book.id, exact: 'Luminous', cfi: SELECTION_CFI, href: 'c1.xhtml', createdAt: 1 });
+  await saveHighlight(db, { documentId: book.id, exact: 'Second', cfi: 'epubcfi(/6/2!/4/6,/1:0,/1:6)', href: 'c1.xhtml', createdAt: 2 });
+  const deleteGate = deferred<void>();
+  const run = db.runAsync.bind(db);
+  db.runAsync = (async (...args: Parameters<typeof run>) => {
+    if (String(args[0]).startsWith('DELETE')) await deleteGate.promise;
+    return run(...args);
+  }) as typeof db.runAsync;
+
+  await render(<ReaderScreen book={book} onClose={jest.fn()} />);
+  await measureFrame();
+  await engineReady();
+  await fireEvent.press(await screen.findByText('Show highlights (2)'));
+
+  await fireEvent.press(screen.getAllByTestId('highlight-go-to')[0]);
+  await fireEvent.press(screen.getAllByTestId('highlight-delete')[1]);
+  const script = String(jest.mocked(mockReader.injectJavascript).mock.calls[0][0]);
+  const token = /"token":"([^"]+)"/.exec(script)?.[1];
+  await act(() => {
+    props().onWebViewMessage?.({ type: 'leafellowPassageJump', token, status: 'confirmed', fullyVisible: true, visibleStart: SELECTION_CFI, visibleEnd: SELECTION_CFI } as never);
+  });
+  expect(screen.getByText('Showing this highlight.')).toBeTruthy();
+
+  await act(async () => { deleteGate.resolve(); });
+
+  expect(await screen.findByText('Highlight deleted.')).toBeTruthy();
+  expect(screen.queryByText('Showing this highlight.')).toBeNull();
 });
 
 test('a pending selection is cleared when the reader moves to another chapter', async () => {

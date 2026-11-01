@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState, type RefObject } from 'react';
 
 import type { PendingSelection } from '../../../../src/reader/highlight-selection';
+import { useOrderedNotice } from './notice-order';
 import type { HighlightLoad, HighlightSession } from '../../../../src/storage/highlight-session';
 import { HighlightOutcomeUnknownError, type SavedHighlight } from '../../../../src/storage/saved-highlights';
 
@@ -15,12 +16,12 @@ function sortHighlights(list: SavedHighlight[]): SavedHighlight[] {
  * The open book's saved highlights and their save and delete messages. Callers check the
  * screen-level conditions (writer closed, export running, list ready) before save and remove.
  */
-export function useHighlights(session: HighlightSession, activeRef: RefObject<boolean>) {
+export function useHighlights(session: HighlightSession, activeRef: RefObject<boolean>, noticeOrderRef: RefObject<number>) {
   const [highlights, setHighlights] = useState<SavedHighlight[]>([]);
   const [listState, setListState] = useState<ListState>({ status: 'loading' });
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [notice, setNotice] = useState('');
+  const [noticeEntry, setNotice] = useOrderedNotice(noticeOrderRef);
   const [error, setError] = useState('');
 
   const apply = useCallback((result: HighlightLoad) => {
@@ -95,5 +96,5 @@ export function useHighlights(session: HighlightSession, activeRef: RefObject<bo
       .finally(() => { if (activeRef.current) setDeletingId(null); });
   }
 
-  return { highlights, listState, saving, deletingId, notice, error, clearMessages, load, save, remove };
+  return { highlights, listState, saving, deletingId, notice: noticeEntry.text, noticeEntry, error, clearMessages, load, save, remove };
 }

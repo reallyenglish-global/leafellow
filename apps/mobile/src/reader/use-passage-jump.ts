@@ -13,12 +13,13 @@ import {
   type PassageJumpRequest,
 } from '../../../../src/reader/passage-jump';
 import type { SavedHighlight } from '../../../../src/storage/saved-highlights';
+import { useOrderedNotice } from './notice-order';
 import { highlightCfi } from './use-reader-marks';
 
 /** One verified "Go to" at a time: inject the check, then settle on its reply, a reload or the timeout. */
-export function usePassageJump(reader: ReturnType<typeof useReader>, activeRef: RefObject<boolean>) {
+export function usePassageJump(reader: ReturnType<typeof useReader>, activeRef: RefObject<boolean>, noticeOrderRef: RefObject<number>) {
   const [jump, setJump] = useState<{ id: string; request: PassageJumpRequest } | null>(null);
-  const [notice, setNotice] = useState('');
+  const [noticeEntry, setNotice] = useOrderedNotice(noticeOrderRef);
   const [error, setError] = useState('');
   const pendingJump = useRef<PassageJumpRequest | null>(null);
 
@@ -33,7 +34,7 @@ export function usePassageJump(reader: ReturnType<typeof useReader>, activeRef: 
     } else if (outcome.status === 'failed') {
       setError(outcome.reason);
     }
-  }, [activeRef]);
+  }, [activeRef, setNotice]);
 
   useEffect(() => {
     if (!jump) return;
@@ -85,5 +86,5 @@ export function usePassageJump(reader: ReturnType<typeof useReader>, activeRef: 
     pendingJump.current = null;
   }
 
-  return { jump, goTo, onReady, onWebViewMessage, notice, error, clearMessages, cancel };
+  return { jump, goTo, onReady, onWebViewMessage, notice: noticeEntry.text, noticeEntry, error, clearMessages, cancel };
 }
