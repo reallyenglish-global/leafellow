@@ -44,7 +44,9 @@ Use Node.js 24+ (Node 24 and 26 are CI targets), pnpm 10.29.3 and Python 3.10+.
 pnpm install --frozen-lockfile
 pnpm typecheck
 pnpm --filter @leafellow/mobile typecheck
+pnpm --filter @leafellow/mobile lint
 pnpm test
+pnpm --filter @leafellow/mobile test
 python3 -m unittest discover -s tests -v
 ```
 

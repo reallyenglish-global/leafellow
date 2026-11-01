@@ -37,8 +37,12 @@ jobs:
         run: |
           pnpm typecheck
           pnpm --filter @leafellow/mobile typecheck
+      - name: Lint mobile code
+        run: pnpm --filter @leafellow/mobile lint
       - name: Test shared import and annotation contracts
         run: pnpm test
+      - name: Test mobile components with the engine mocked
+        run: pnpm --filter @leafellow/mobile test
       - name: Check Expo SDK dependency compatibility
         run: pnpm --filter @leafellow/mobile exec expo install --check
       - name: Diagnose Expo project configuration
