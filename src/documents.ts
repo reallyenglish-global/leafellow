@@ -65,12 +65,13 @@ function safePath(value: string): string {
 }
 
 function checkXml(text: string): void {
-  // Reject declarations before parsing: no DTD/entity expansion or external entities.
-  if (/<!DOCTYPE|<!ENTITY/i.test(text)) throw new ImportError('XML declarations are unsupported');
-  if (/<(?:[\w.-]+:)?(?:script|iframe|object|embed)\b|\son[\w-]+\s*=/i.test(text)) {
+  // A bare HTML5 doctype is inert; reject external or internal DTD/entity declarations.
+  const withoutHtml5Doctype = text.replace(/<!DOCTYPE\s+html\s*>/gi, '');
+  if (/<!DOCTYPE|<!ENTITY/i.test(withoutHtml5Doctype)) throw new ImportError('XML declarations are unsupported');
+  if (/<(?:[\w.-]+:)?(?:script|iframe|object|embed)\b|\son[\w-]+\s*=/i.test(withoutHtml5Doctype)) {
     throw new ImportError('Active EPUB content');
   }
-  if (XMLValidator.validate(text) !== true) throw new ImportError('Invalid EPUB XML');
+  if (XMLValidator.validate(withoutHtml5Doctype) !== true) throw new ImportError('Invalid EPUB XML');
 }
 
 function epubParts(bytes: Uint8Array): TextPart[] {

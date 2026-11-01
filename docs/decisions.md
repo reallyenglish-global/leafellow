@@ -14,15 +14,18 @@
 - EPUB and PDF are both required on all three platforms; see [format scope and acceptance](formats.md).
 - See the [cross-platform architecture proposal](cross-platform.md).
 
-## Proposed, not settled
+## Confirmed implementation stack
 
-- React Native + Expo + TypeScript + Expo Router, with React Native Web and platform-specific reader/storage/auth adapters. Conditional on reader/math/anchor/accessibility feasibility across all three targets.
-- Readium as a candidate, not assumed cross-format/platform parity. Compare Flutter/native options against actual requirements.
+- React Native + Expo + TypeScript + Expo Router is selected for the initial Android/iOS app; the planned web UI remains required. Expo SDK 58.0.22 and React Native 0.88.1 are pinned in `apps/mobile` with pnpm workspace management. Expo compatibility checks pass; this is not evidence of native runtime parity.
+- The initial mobile reader spike uses the EPUB React Native component with scripted EPUB content disabled. It remains a feasibility candidate until native security, selection, accessibility, and locator tests pass.
+
+## Proposed product sequencing
+
 - Personal vertical slice before sync/social infrastructure; test one-partner sharing cheaply.
 
-## Open decisions before mobile implementation
+## Remaining feasibility and product decisions
 
-1. Representative authorized EPUB and PDF files, launch scope for scanned/protected/fixed-layout material, and the browser/device test matrix across required web, Android and iOS targets.
+1. Alice's Adventures in Wonderland (Project Gutenberg eBook 11, EPUB3) is selected as the first local reader sample. A representative PDF and full browser/device test matrix remain open; decide scope for scanned/protected/fixed-layout material before claiming format support.
 2. A permitted provider route and budget. Open-source distribution alone does not prove provider eligibility or mobile OAuth feasibility.
 3. Whether a limited, explicitly opted-in API alternative is acceptable if subscription integration is unavailable.
 4. Trusted maths reviewer/reference and the first delayed independent learning check.

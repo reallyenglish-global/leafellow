@@ -24,6 +24,8 @@ Demonstrate one permitted provider request, cancel, denied/expired auth, no-netw
 
 Import → read → highlight → context preview → explanation/bridge → private annotation → return → offline resume/export. Both EPUB and PDF across web, Android and iOS, with one permitted provider initially. Individual feasibility tasks may isolate formats, but a single-format result is not acceptance of the agreed core reader scope. See [format scope](formats.md). Test anchors, partial AI output, hostile imports, consent, secrets, restart and restore. Run on target hardware; a screenshot is not proof of the experience.
 
+**Initial prototype status:** React Native + Expo app code imports a selected local, bounded, DRM-free/reflowable EPUB and renders a selection-preview surface on Android/iOS. Alice's Adventures in Wonderland (Project Gutenberg EPUB3) is the chosen first source. One last-reading CFI, progress value and content hash are stored in app-local SQLite; the same EPUB must be selected again to resume, and source bytes are not retained. iOS/Android bundles type-check and export, but native simulator/device behavior remains unverified. The web route is an informational placeholder. PDF, saved highlights, AI and full cross-platform acceptance remain unimplemented.
+
 ## 3. Learning evidence and optional sharing
 
 Reviewed foundation examples, learner-controlled concepts and delayed unaided checks. Try voluntary export of a short question to one partner with rights/audience preview. Do not export private chat history or whole books. No autonomous reading of partner replies.
