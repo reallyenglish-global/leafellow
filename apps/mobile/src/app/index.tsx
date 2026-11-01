@@ -4,7 +4,7 @@ import { useFileSystem } from '@epubjs-react-native/expo-file-system';
 import { File } from 'expo-file-system';
 import { Stack } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useSQLiteContext } from 'expo-sqlite';
 
@@ -100,6 +100,7 @@ function sortHighlights(list: SavedHighlight[]): SavedHighlight[] {
 function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void }) {
   const db = useSQLiteContext();
   const { width, height } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const [selection, setSelection] = useState<PendingSelection | null>(null);
   const [selectionNotice, setSelectionNotice] = useState('');
   const [progress, setProgress] = useState<number | null>(null);
@@ -367,8 +368,8 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
   }
 
   return (
-    <View style={styles.readerScreen}>
-      <View style={styles.readerHeader}>
+    <View style={[styles.readerScreen, { paddingBottom: insets.bottom }]}>
+      <View style={[styles.readerHeader, { paddingTop: 12 + insets.top }]}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={closing ? 'Finishing saves before returning to library'
@@ -390,7 +391,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
           src={book.uri}
           fileSystem={useFileSystem}
           width={width}
-          height={Math.max(240, height - (selection || showHighlights ? 300 : 180))}
+          height={Math.max(240, height - insets.top - insets.bottom - (selection || showHighlights ? 300 : 180))}
           initialLocation={book.resumeCfi ?? undefined}
           flow="scrolled-doc"
           spread="none"

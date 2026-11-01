@@ -1,6 +1,6 @@
 # Android reader acceptance
 
-**Status: provisional.** The workflow, flow and tooling are implemented and checked on the host. **No full native acceptance pass yet:** run 41313612875 verified rendering, real long-press selection, saving and scrolling after the transport fix; its next assertion hit a zero-height accessibility-node false positive. Resume, return-to, export and deletion still require the next hosted run. Nothing here counts as Android acceptance until a hosted CI run passes and its evidence artifact has been reviewed. iOS is separate and not covered: [`ios.yml`](../.github/workflows/ios.yml) is only a build and launch smoke test.
+**Status: provisional.** The workflow, flow and tooling are implemented and checked on the host. **No full native acceptance pass yet:** rendering, real selection, saving and scrolling are verified. Run 41315463625 also passed the corrected visibility checks, then exposed a Library-button/status-bar overlap. The safe-area fix awaits a new hosted run; resume, return-to, export and deletion remain unverified. Nothing here counts as Android acceptance until a hosted CI run passes and its evidence artifact has been reviewed. iOS is separate and not covered: [`ios.yml`](../.github/workflows/ios.yml) is only a build and launch smoke test.
 
 ## What it exercises
 
@@ -28,6 +28,12 @@ The app now stages the exact already-validated bytes in its own app-cache namesp
 Only the operation's own newly-created file may be removed after a partial write; a failed exclusive creation must not delete an existing file. Cleanup is attempted on close, import failure, unmount and next startup. A crash or deletion failure can leave a temporary copy in cache until a later cleanup; no backup/secure-erasure guarantee is made. This is not a retained book library, an upload, or permission to execute book scripts. `allowScriptedContent` remains false. A bounded opening timeout now shows a useful error rather than an unexplained endless spinner.
 
 Host regression tests cover this boundary and lifecycle. The transport fix has native rendering/selection/save evidence; restart, return-to, export and delete remain unverified until the full flow completes.
+
+## Safe-area regression
+
+Run 41315463625 passed the corrected positive-area visibility check, then a normal `reader-back` tap did not return to the library. Its failed-step image and hierarchy show the actual enabled button at `[42,44][210,140]` (center y=92), underneath Android SystemUI's status bar `[0,0][1080,128]`. This was a production touch-target/layout defect, not a reason to tap a special coordinate in the test.
+
+The reader now applies live `useSafeAreaInsets()` values to header top padding and bottom controls, and subtracts those insets from the renderer viewport. The dark header continues behind the status bar; the Library control itself starts below it. The normal accessibility-directed tap and mandatory home-screen assertion are unchanged. Source-wiring/captured-geometry tests are only regression policy checks; a new hosted run must prove the control actually works before restart/resume acceptance is claimed.
 
 ## Fixture
 
