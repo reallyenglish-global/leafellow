@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+# No injected JS, source URI or test-only import hook: use UIDocumentPickerViewController.
+appId: ${APP_ID}
+---
+- tapOn:
+    id: "open-epub"
+- runFlow:
+    file: open-fixture-shelf.yaml
+    env:
+      PICKER_CHILD: "leafellow-fixture(\\.epub)?(,.*)?"
+- extendedWaitUntil:
+    visible:
+      text: "leafellow-fixture(\\.epub)?(,.*)?"
+      below: "Search"
+    timeout: 20000
+- tapOn:
+    text: "leafellow-fixture(\\.epub)?(,.*)?"
+    below: "Search"
+- extendedWaitUntil:
+    visible:
+      id: "highlights-toggle"
+    timeout: 60000

@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: Apache-2.0
+# Search anchors the content area: folder rows are below it, titles/back buttons above it.
+# Never infer a navigation action merely because the child has not rendered yet.
+# Actual English Files labels remain a hosted native-evidence gate.
+appId: ${APP_ID}
+---
+- extendedWaitUntil:
+    visible: "Search"
+    timeout: 20000
+# The previous export may have left Files inside the target folder. Only this explicit
+# title state permits the FixtureShelf back button, never a same-named shelf title.
+- runFlow:
+    when:
+      visible:
+        text: "LeafellowExports"
+        above: "Search"
+    commands:
+      - tapOn:
+          text: "FixtureShelf"
+          above: "Search"
+# If Files opened on Recents, choose its Browse tab, not the navigation title above Search.
+- runFlow:
+    when:
+      visible:
+        text: "Browse"
+        below: "Search"
+    commands:
+      - tapOn:
+          text: "Browse"
+          below: "Search"
+- extendedWaitUntil:
+    visible:
+      text: "On My iPhone|FixtureShelf|${PICKER_CHILD}"
+      below: "Search"
+    timeout: 20000
+- runFlow:
+    when:
+      visible:
+        text: "On My iPhone"
+        below: "Search"
+    commands:
+      - tapOn:
+          text: "On My iPhone"
+          below: "Search"
+      - extendedWaitUntil:
+          visible:
+            text: "FixtureShelf|${PICKER_CHILD}"
+            below: "Search"
+          timeout: 15000
+- runFlow:
+    when:
+      visible:
+        text: "FixtureShelf"
+        below: "Search"
+    commands:
+      - tapOn:
+          text: "FixtureShelf"
+          below: "Search"
+- extendedWaitUntil:
+    visible:
+      text: "${PICKER_CHILD}"
+      below: "Search"
+    timeout: 20000
