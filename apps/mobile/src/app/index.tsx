@@ -5,7 +5,7 @@ import { File } from 'expo-file-system';
 import { Stack } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import { useSQLiteContext } from 'expo-sqlite';
 
 import { captureSelection, isSelectionCurrent, type PendingSelection } from '../../../../src/reader/highlight-selection';
@@ -99,7 +99,11 @@ function sortHighlights(list: SavedHighlight[]): SavedHighlight[] {
 
 function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void }) {
   const db = useSQLiteContext();
-  const { width, height } = useWindowDimensions();
+  const [readerSize, setReaderSize] = useState({ width: 0, height: 0 });
+  const handleReaderLayout = useCallback(({ nativeEvent: { layout } }: LayoutChangeEvent) => {
+    const { width, height } = layout;
+    setReaderSize(current => current.width === width && current.height === height ? current : { width, height });
+  }, []);
   const insets = useSafeAreaInsets();
   const [selection, setSelection] = useState<PendingSelection | null>(null);
   const [selectionNotice, setSelectionNotice] = useState('');
@@ -385,13 +389,15 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
         <Text accessibilityRole="header" numberOfLines={1} style={styles.bookTitle}>{book.name}</Text>
         <Text style={styles.progress}>{progress === null ? 'Opening…' : `${Math.round(progress)}%`}</Text>
       </View>
-      <View style={styles.readerFrame}>
-        <Reader
+      {/* Measure the space left by the actual header, insets and panels. The engine's
+          flex root needs a bounded parent; window-height estimates can clip its controls. */}
+      <View style={styles.readerFrame} onLayout={handleReaderLayout}>
+        {readerSize.width > 0 && readerSize.height > 0 && <Reader
           key={book.id}
           src={book.uri}
           fileSystem={useFileSystem}
-          width={width}
-          height={Math.max(240, height - insets.top - insets.bottom - (selection || showHighlights ? 300 : 180))}
+          width={readerSize.width}
+          height={readerSize.height}
           initialLocation={book.resumeCfi ?? undefined}
           flow="scrolled-doc"
           spread="none"
@@ -426,7 +432,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
             }
           }}
           onDisplayError={(reason) => setError(`This EPUB could not be displayed: ${reason}`)}
-        />
+        />}
       </View>
       {book.resumeCfi ? <Text style={styles.resumeNote}>Resumed from this book’s last saved reading position.</Text> : null}
       {selection ? (
@@ -736,7 +742,7 @@ const styles = StyleSheet.create({
   backText: { color: '#F7F3E8', fontSize: 15, fontWeight: '600' },
   bookTitle: { flex: 1, color: '#F7F3E8', fontSize: 15, fontWeight: '600' },
   progress: { minWidth: 44, color: '#C5D8C1', fontSize: 12, textAlign: 'right' },
-  readerFrame: { overflow: 'hidden' },
+  readerFrame: { flex: 1, minHeight: 0, overflow: 'hidden' },
   resumeNote: { color: '#356B52', fontSize: 12, textAlign: 'center', paddingVertical: 8 },
   selectionCard: { maxHeight: 200, margin: 12, padding: 16, borderRadius: 16, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E1E8DE' },
   selectionLabel: { color: '#356B52', fontSize: 10, fontWeight: '700', letterSpacing: 1.2, marginBottom: 8 },

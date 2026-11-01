@@ -21,7 +21,9 @@ class ReaderSafeAreaPolicyTests(unittest.TestCase):
         self.assertIn('paddingBottom: insets.bottom', reader)
         self.assertIn('paddingTop: insets.top', reader)
         self.assertIn('paddingBottom: 12', reader)
-        self.assertIn('height - insets.top - insets.bottom', reader)
+        # Insets and actual siblings determine the frame; do not subtract them again.
+        self.assertIn('onLayout={handleReaderLayout}', reader)
+        self.assertIn('height={readerSize.height}', reader)
 
     def test_original_back_center_was_under_system_bar(self):
         status_bottom, back_top, back_bottom = 128, 44, 140
