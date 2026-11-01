@@ -1,0 +1,157 @@
+# SPDX-License-Identifier: Apache-2.0
+# Android reader acceptance: real picker, native long-press selection, save, persistence across a
+# process restart, return-to via the existing engine bridge, privacy-gated export, delete.
+# Maestro text selectors are full-match regular expressions, so literal punctuation is escaped.
+appId: ${APP_ID}
+name: Leafellow Android reader acceptance
+---
+# 1. Clean launch of the installed Release APK (no Metro, no dev client).
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible:
+      id: "open-epub"
+    timeout: 60000
+- runFlow: pick-fixture.yaml
+
+# 2. Native long press on the isolated opening word in the rendered EPUB.
+# WebView retains offscreen text nodes with zero height (observed in run 41313612875).
+# Maestro 2.12 sizeMatches is abs(actual-target)<=tolerance: this requires 1..1999px,
+# excluding zero-area nodes without dropping any mandatory visibility assertion.
+- extendedWaitUntil:
+    visible:
+      text: "Luminous"
+      height: 1000
+      tolerance: 999
+    timeout: 60000
+- assertVisible: "Show highlights \\(0\\)"
+- longPressOn: "Luminous"
+- extendedWaitUntil:
+    visible:
+      id: "passage-preview-text"
+    timeout: 20000
+- assertVisible:
+    id: "passage-preview-text"
+    text: "Luminous"
+- tapOn:
+    id: "save-highlight"
+    enabled: true
+- extendedWaitUntil:
+    visible: "Highlight saved on this device\\."
+    timeout: 20000
+- assertVisible: "Show highlights \\(1\\)"
+
+# 3. Move away inside the reader with a native swipe, then close (waits for queued saves).
+- swipe:
+    start: 50%, 75%
+    end: 50%, 20%
+    duration: 400
+- swipe:
+    start: 50%, 75%
+    end: 50%, 20%
+    duration: 400
+- swipe:
+    start: 50%, 75%
+    end: 50%, 20%
+    duration: 400
+# The highlight panel is closed, so the only "Luminous" on screen would be the chapter text.
+- assertNotVisible:
+    text: "Luminous"
+    height: 1000
+    tolerance: 999
+- tapOn:
+    id: "reader-back"
+- extendedWaitUntil:
+    visible:
+      id: "open-epub"
+    timeout: 30000
+
+# 4. Force-stop and relaunch without clearing data, then re-select the identical file.
+- stopApp
+- launchApp:
+    clearState: false
+    stopApp: true
+- extendedWaitUntil:
+    visible:
+      id: "open-epub"
+    timeout: 60000
+- runFlow: pick-fixture.yaml
+- assertVisible: "Resumed from this book’s last saved reading position\\."
+- assertVisible: "Show highlights \\(1\\)"
+# A resume note alone does not prove we reopened away from the saved passage. Require actual
+# rendered paragraph text first, so an empty/loading WebView cannot satisfy the absence check.
+- extendedWaitUntil:
+    visible:
+      text: "Paragraph [0-9]+ of the acceptance chapter.*"
+      height: 1000
+      tolerance: 999
+    timeout: 30000
+- assertNotVisible:
+    text: "Luminous"
+    height: 1000
+    tolerance: 999
+- takeScreenshot: reader-resumed-away
+- tapOn:
+    id: "highlights-toggle"
+- assertVisible: "Hide highlights \\(1\\)"
+
+# 5. Return to the passage through the existing engine bridge; it reports only after it checks
+#    the drawn range text against the saved quote.
+- tapOn:
+    id: "highlight-go-to"
+    enabled: true
+- extendedWaitUntil:
+    visible: "Showing this highlight\\.|Showing the start of this highlight; it continues below\\."
+    timeout: 20000
+# Independent accessibility evidence from the rendered reader, not the identical quote in the
+# highlight row below the toggle and not just the app's bridge-success message.
+- assertVisible:
+    text: "Luminous"
+    height: 1000
+    tolerance: 999
+    above:
+      id: "highlights-toggle"
+- takeScreenshot: reader-returned-to-passage
+
+# 6. Privacy preview and acknowledgement, then the real system folder picker.
+- tapOn:
+    id: "export-start"
+- extendedWaitUntil:
+    visible:
+      id: "export-acknowledge"
+    timeout: 20000
+- assertVisible: "EXPORT THIS BOOK’S HIGHLIGHTS"
+- tapOn:
+    id: "export-acknowledge"
+- tapOn:
+    id: "export-confirm"
+    enabled: true
+- runFlow: pick-export-folder.yaml
+- extendedWaitUntil:
+    visible: "Exported 1 highlight to the folder you chose.*"
+    timeout: 30000
+
+# 7. Delete through the UI, restart, re-import: the list is empty.
+- tapOn:
+    id: "highlight-delete"
+    enabled: true
+- extendedWaitUntil:
+    visible: "Highlight deleted\\."
+    timeout: 20000
+- assertVisible: "Hide highlights \\(0\\)"
+- tapOn:
+    id: "reader-back"
+- extendedWaitUntil:
+    visible:
+      id: "open-epub"
+    timeout: 30000
+- stopApp
+- launchApp:
+    clearState: false
+    stopApp: true
+- extendedWaitUntil:
+    visible:
+      id: "open-epub"
+    timeout: 60000
+- runFlow: pick-fixture.yaml
+- assertVisible: "Show highlights \\(0\\)"

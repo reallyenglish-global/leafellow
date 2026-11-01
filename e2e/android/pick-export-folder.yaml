@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+# Grant /sdcard/Documents/LeafellowExports in the real system folder picker.
+# On API 36, the directory picker opens at primary storage without a roots drawer.
+# It may also remember Documents; skip that navigation when the target is already listed.
+appId: ${APP_ID}
+---
+- extendedWaitUntil:
+    visible: "Documents|LeafellowExports"
+    timeout: 20000
+- runFlow:
+    when:
+      notVisible: "LeafellowExports"
+    commands:
+      - tapOn: "Documents"
+- extendedWaitUntil:
+    visible: "LeafellowExports"
+    timeout: 15000
+- tapOn: "LeafellowExports"
+- tapOn:
+    text: "(?i)use this folder"
+    enabled: true
+- tapOn: "(?i)allow"

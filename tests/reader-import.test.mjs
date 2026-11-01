@@ -14,6 +14,18 @@ test('allows only bounded EPUB file selections before reading bytes', () => {
   ]) assert.throws(() => validateEpubFile(name, size), message);
 });
 
+test('accepts an opaque provider document name only with explicit EPUB MIME and bounded size', async () => {
+  validateEpubFile('msf:1000000031', 100, 'application/epub+zip');
+  validateEpubFile('raw%3A1000', 100, 'application/epub+zip');
+  assert.throws(() => validateEpubFile('msf:1000000031', 100, 'application/pdf'), /Choose an EPUB/);
+  assert.throws(() => validateEpubFile('msf:1000000031', null, 'application/epub+zip'), /size could not be verified/);
+  assert.throws(() => validateEpubFile('msf:1000000031', 2 * 1024 * 1024 + 1, 'application/epub+zip'), /up to 2 MiB/);
+  // MIME is admission metadata, not proof of EPUB content. The safe parser still rejects it.
+  await assert.rejects(inspectEpub(new TextEncoder().encode('%PDF-not-an-epub')));
+  const document = await inspectEpub(epubBytes());
+  assert.equal(document.format, 'epub');
+});
+
 test('validates bytes through the safe EPUB parser before exposing the source', async () => {
   const document = await inspectEpub(epubBytes());
   assert.equal(document.format, 'epub');
