@@ -1,47 +1,281 @@
 // SPDX-License-Identifier: Apache-2.0
-import { Reader, useReader } from '@epubjs-react-native/core';
+import { Reader, ReaderProvider, useReader } from '@epubjs-react-native/core';
 import { useFileSystem } from '@epubjs-react-native/expo-file-system';
 import { File } from 'expo-file-system';
 import { Stack } from 'expo-router';
-import { useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useSQLiteContext } from 'expo-sqlite';
 
+import { captureSelection, isSelectionCurrent, type PendingSelection } from '../../../../src/reader/highlight-selection';
 import { inspectEpub, validateEpubFile } from '../../../../src/reader/import-epub';
+import {
+  PASSAGE_JUMP_TIMEOUT_MS,
+  buildPassageJumpScript,
+  createPassageJumpRequest,
+  passageJumpFailure,
+  passageJumpStatus,
+  readPassageJumpMessage,
+  type PassageJumpOutcome,
+  type PassageJumpRequest,
+} from '../../../../src/reader/passage-jump';
 import { normalizeEpubReaderProgress } from '../../../../src/reader/reader-progress';
+import { createHighlightSession } from '../../../../src/storage/highlight-session';
 import { clearLastReadingPosition, loadLastReadingPosition, saveLastReadingPosition } from '../../../../src/storage/reading-position';
+import { HighlightOutcomeUnknownError, type SavedHighlight } from '../../../../src/storage/saved-highlights';
+import { createSerialWriter } from '../../../../src/storage/serial-writes';
 
 type OpenBook = { name: string; uri: string; id: string; resumeCfi: string | null };
+type ListState = { status: 'loading' } | { status: 'error' } | { status: 'ready'; unreadable: number };
+
+const HIGHLIGHT_STYLE = { color: '#E8C547', opacity: 0.45 };
+// Module-level so its identity is stable: Reader reloads the whole WebView when defaultTheme changes.
+const READER_THEME = { body: { color: '#18312B', background: '#F7F3E8', 'font-family': 'Georgia, serif', 'line-height': '1.7' } };
+
+function highlightCfi(highlight: SavedHighlight): string {
+  return highlight.annotation.anchor.format === 'epub' ? highlight.annotation.anchor.cfi : '';
+}
+
+function sortHighlights(list: SavedHighlight[]): SavedHighlight[] {
+  return [...list].sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
 
 function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void }) {
   const db = useSQLiteContext();
   const { width, height } = useWindowDimensions();
-  const [selection, setSelection] = useState('');
+  const [selection, setSelection] = useState<PendingSelection | null>(null);
+  const [selectionNotice, setSelectionNotice] = useState('');
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [positionError, setPositionError] = useState('');
+  const [highlights, setHighlights] = useState<SavedHighlight[]>([]);
+  const [listState, setListState] = useState<ListState>({ status: 'loading' });
+  const [highlightMessage, setHighlightMessage] = useState('');
+  const [highlightError, setHighlightError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [showHighlights, setShowHighlights] = useState(false);
+  const [jump, setJump] = useState<{ id: string; request: PassageJumpRequest } | null>(null);
+  const [closing, setClosing] = useState(false);
+  // Bumped on every engine onReady, including WebView reloads, which drop all drawn marks.
+  const [readyGeneration, setReadyGeneration] = useState(0);
+  const [markError, setMarkError] = useState('');
   const reader = useReader();
-  const writes = useRef<Promise<void>>(Promise.resolve());
+  const readerRef = useRef(reader);
+  const [writer] = useState(createSerialWriter);
+  const [session] = useState(() => createHighlightSession(db, book.id, writer));
+  const active = useRef(true);
+  const currentHref = useRef<string | null>(null);
+  const applied = useRef(new Set<string>());
+  const pendingJump = useRef<PassageJumpRequest | null>(null);
 
-  function saveLocation(cfi: string, progressFraction: number) {
-    const position = { documentId: book.id, cfi, progress: progressFraction, updatedAt: Date.now() };
-    writes.current = writes.current
-      .catch(() => undefined)
-      .then(() => saveLastReadingPosition(db, position))
-      .then(() => setPositionError(''))
-      .catch(() => setPositionError('The reading position could not be saved on this device.'));
+  const loadHighlights = useCallback(async () => {
+    setListState({ status: 'loading' });
+    const result = await session.load();
+    if (!active.current || result.status === 'stale') return;
+    if (result.status === 'error') {
+      setListState({ status: 'error' });
+      return;
+    }
+    setHighlights(result.highlights);
+    setListState({ status: 'ready', unreadable: result.unreadable });
+  }, [session]);
+
+  useEffect(() => {
+    active.current = true;
+    void loadHighlights();
+    return () => { active.current = false; };
+  }, [loadHighlights]);
+
+  useEffect(() => { readerRef.current = reader; });
+
+  // Reconcile drawn marks with the stored list for the current WebView instance only.
+  useEffect(() => {
+    if (readyGeneration === 0) return;
+    const wanted = new Map(highlights.map(highlight => [highlightCfi(highlight), highlight] as const));
+    let failed = 0;
+    for (const cfi of [...applied.current]) {
+      if (wanted.has(cfi)) continue;
+      try {
+        readerRef.current.removeAnnotationByCfi(cfi);
+        applied.current.delete(cfi);
+      } catch {
+        failed += 1;
+      }
+    }
+    for (const [cfi, highlight] of wanted) {
+      if (!cfi || applied.current.has(cfi)) continue;
+      try {
+        readerRef.current.addAnnotation('highlight', cfi, { id: highlight.id }, HIGHLIGHT_STYLE);
+        applied.current.add(cfi);
+      } catch {
+        failed += 1;
+      }
+    }
+    setMarkError(failed > 0
+      ? 'Some highlight marks could not be updated on the page. Your saved highlights are unchanged.'
+      : '');
+  }, [readyGeneration, highlights]);
+
+  const finishJump = useCallback((outcome: PassageJumpOutcome) => {
+    pendingJump.current = null;
+    setJump(null);
+    if (outcome.status === 'confirmed') {
+      setHighlightMessage(outcome.fullyVisible
+        ? 'Showing this highlight.'
+        : 'Showing the start of this highlight; it continues below.');
+    } else if (outcome.status === 'failed') {
+      setHighlightError(outcome.reason);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!jump) return;
+    const timer = setTimeout(() => {
+      if (pendingJump.current === jump.request) finishJump(passageJumpStatus(jump.request, Date.now()));
+    }, Math.max(0, PASSAGE_JUMP_TIMEOUT_MS - (Date.now() - jump.request.requestedAt)));
+    return () => clearTimeout(timer);
+  }, [jump, finishJump]);
+
+  function handleReady(location: { start?: { href?: string } } | undefined) {
+    currentHref.current = location?.start?.href ?? null;
+    applied.current = new Set();
+    if (pendingJump.current) finishJump(passageJumpFailure('reloaded'));
+    setReadyGeneration(generation => generation + 1);
   }
 
+  function handleWebViewMessage(message: unknown) {
+    const outcome = readPassageJumpMessage(pendingJump.current, message);
+    if (outcome && outcome.status !== 'in-progress') finishJump(outcome);
+  }
+
+  function saveLocation(cfi: string, progressFraction: number) {
+    if (writer.isClosed()) return;
+    const position = { documentId: book.id, cfi, progress: progressFraction, updatedAt: Date.now() };
+    writer.run(() => saveLastReadingPosition(db, position))
+      .then(() => { if (active.current) setPositionError(''); })
+      .catch(() => { if (active.current) setPositionError('The reading position could not be saved on this device.'); });
+  }
+
+  function handleSelected(text: string, cfiRange: string) {
+    setHighlightMessage('');
+    setHighlightError('');
+    const result = captureSelection(text, cfiRange, {
+      documentId: book.id,
+      // Only this book's own location report; never provider state that may predate it.
+      href: currentHref.current,
+      selectedAt: Date.now(),
+    });
+    if (result.ok) {
+      setSelection(result.selection);
+      setSelectionNotice('');
+    } else {
+      setSelection(null);
+      setSelectionNotice(result.reason);
+    }
+  }
+
+  function saveSelection() {
+    const pending = selection;
+    if (!pending || saving || writer.isClosed() || listState.status !== 'ready') return;
+    if (!isSelectionCurrent(pending, { documentId: book.id, href: currentHref.current })) {
+      setSelection(null);
+      setSelectionNotice('The reader moved since this passage was selected. Select it again to save it.');
+      return;
+    }
+    setSaving(true);
+    setHighlightMessage('');
+    setHighlightError('');
+    session.save({
+      documentId: pending.documentId, exact: pending.exact, cfi: pending.cfi, href: pending.href, createdAt: Date.now(),
+    })
+      .then(({ highlight: saved, created }) => {
+        if (!active.current) return;
+        setHighlights(current => sortHighlights([...current.filter(item => item.id !== saved.id), saved]));
+        setSelection(current => (current === pending ? null : current));
+        setHighlightMessage(created ? 'Highlight saved on this device.' : 'This passage was already saved.');
+      })
+      .catch((reason: unknown) => {
+        if (!active.current) return;
+        if (reason instanceof HighlightOutcomeUnknownError) {
+          setHighlightError('The save may have finished, but it could not be confirmed. Checking saved highlights again.');
+          void loadHighlights();
+          return;
+        }
+        setHighlightError(reason instanceof RangeError ? `Not saved: ${reason.message}.` : 'The highlight could not be saved on this device. Nothing was saved.');
+      })
+      .finally(() => { if (active.current) setSaving(false); });
+  }
+
+  function goToHighlight(highlight: SavedHighlight) {
+    const cfi = highlightCfi(highlight);
+    if (!cfi || pendingJump.current || highlight.annotation.anchor.format !== 'epub') return;
+    setHighlightMessage('');
+    setHighlightError('');
+    let request: PassageJumpRequest;
+    try {
+      request = createPassageJumpRequest(cfi, highlight.annotation.quote.exact, Date.now());
+    } catch {
+      finishJump(passageJumpFailure('invalid-target'));
+      return;
+    }
+    pendingJump.current = request;
+    setJump({ id: highlight.id, request });
+    try {
+      reader.injectJavascript(buildPassageJumpScript(request));
+    } catch {
+      finishJump(passageJumpFailure('engine-unavailable'));
+    }
+  }
+
+  function deleteHighlight(highlight: SavedHighlight) {
+    if (deletingId || writer.isClosed()) return;
+    setDeletingId(highlight.id);
+    setHighlightMessage('');
+    setHighlightError('');
+    // The marks effect removes the drawn mark once the row leaves the list.
+    session.remove(highlight.id)
+      .then(removed => {
+        if (!active.current) return;
+        setHighlights(current => current.filter(item => item.id !== highlight.id));
+        setHighlightMessage(removed ? 'Highlight deleted.' : 'This highlight was already gone.');
+      })
+      .catch((reason: unknown) => {
+        if (!active.current) return;
+        if (reason instanceof HighlightOutcomeUnknownError) {
+          setHighlightError('The delete may have finished, but it could not be confirmed. Checking saved highlights again.');
+          void loadHighlights();
+          return;
+        }
+        setHighlightError('The highlight could not be deleted. It is still saved.');
+      })
+      .finally(() => { if (active.current) setDeletingId(null); });
+  }
+
+  const canSave = !saving && !closing && listState.status === 'ready';
+
   async function closeReader() {
-    await writes.current;
+    if (closing) return;
+    setClosing(true);
+    setSelection(null);
+    pendingJump.current = null;
+    await writer.close();
+    active.current = false;
     onClose();
   }
 
   return (
     <View style={styles.readerScreen}>
       <View style={styles.readerHeader}>
-        <Pressable accessibilityRole="button" onPress={() => { void closeReader(); }} style={styles.backButton}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={closing ? 'Finishing saves before returning to library' : 'Back to library'}
+          accessibilityState={{ disabled: closing }}
+          disabled={closing}
+          onPress={() => { void closeReader(); }}
+          style={styles.backButton}
+        >
           <Text style={styles.backText}>‹  Library</Text>
         </Pressable>
         <Text accessibilityRole="header" numberOfLines={1} style={styles.bookTitle}>{book.name}</Text>
@@ -53,16 +287,33 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
           src={book.uri}
           fileSystem={useFileSystem}
           width={width}
-          height={Math.max(240, height - (selection ? 210 : 132))}
+          height={Math.max(240, height - (selection || showHighlights ? 300 : 180))}
           initialLocation={book.resumeCfi ?? undefined}
           flow="scrolled-doc"
           spread="none"
           enableSelection
           allowScriptedContent={false}
           allowPopups={false}
-          defaultTheme={{ body: { color: '#18312B', background: '#F7F3E8', 'font-family': 'Georgia, serif', 'line-height': '1.7' } }}
-          onSelected={(text) => setSelection(text)}
+          defaultTheme={READER_THEME}
+          onReady={(_total, location) => handleReady(location)}
+          onWebViewMessage={handleWebViewMessage}
+          onSelected={handleSelected}
+          onPressAnnotation={(annotation) => {
+            const pressed = highlights.find(item => highlightCfi(item) === annotation.cfiRange);
+            if (pressed) {
+              setShowHighlights(true);
+              setHighlightMessage(`Saved highlight: “${pressed.annotation.quote.exact.trim().slice(0, 80)}”`);
+            }
+          }}
           onLocationChange={(_total, location, nextProgressPercent) => {
+            const href = location.start.href;
+            if (href !== currentHref.current) {
+              currentHref.current = href;
+              if (selection && !isSelectionCurrent(selection, { documentId: book.id, href })) {
+                setSelection(null);
+                setSelectionNotice('The reader moved to another chapter, so the earlier selection was cleared.');
+              }
+            }
             setProgress(nextProgressPercent);
             try {
               saveLocation(location.start.cfi, normalizeEpubReaderProgress(nextProgressPercent));
@@ -78,15 +329,100 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
         <View style={styles.selectionCard}>
           <Text style={styles.selectionLabel}>PASSAGE PREVIEW</Text>
           <ScrollView style={styles.selectionScroll}>
-            <Text selectable style={styles.selectionText}>{selection}</Text>
+            <Text selectable style={styles.selectionText}>{selection.exact}</Text>
           </ScrollView>
-          <Text style={styles.selectionHint}>AI explanations and saved highlights are not connected in this prototype.</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Save this passage as a private highlight"
+            accessibilityState={{ disabled: !canSave, busy: saving }}
+            disabled={!canSave}
+            onPress={saveSelection}
+            style={({ pressed }) => [styles.saveButton, pressed && styles.pressed, !canSave && styles.disabled]}
+          >
+            <Text style={styles.saveButtonText}>
+              {saving ? 'Saving…' : listState.status === 'ready' ? 'Save highlight' : 'Waiting for saved highlights…'}
+            </Text>
+          </Pressable>
+          <Text style={styles.selectionHint}>Highlights are stored locally on this device; no automatic upload. AI explanations are not connected in this prototype.</Text>
+        </View>
+      ) : null}
+      {selectionNotice ? <Text accessibilityRole="alert" style={styles.notice}>{selectionNotice}</Text> : null}
+      {highlightMessage ? <Text accessibilityLiveRegion="polite" style={styles.notice}>{highlightMessage}</Text> : null}
+      {highlightError ? <Text accessibilityRole="alert" style={styles.error}>{highlightError}</Text> : null}
+      {markError ? <Text accessibilityRole="alert" style={styles.error}>{markError}</Text> : null}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: showHighlights }}
+        onPress={() => setShowHighlights(open => !open)}
+        style={styles.highlightToggle}
+      >
+        <Text style={styles.highlightToggleText}>
+          {listState.status === 'loading' ? 'Loading highlights…'
+            : listState.status === 'error' ? 'Highlights unavailable'
+              : `${showHighlights ? 'Hide' : 'Show'} highlights (${highlights.length})`}
+        </Text>
+      </Pressable>
+      {showHighlights ? (
+        <View style={styles.highlightPanel}>
+          {listState.status === 'error' ? (
+            <View style={styles.highlightRow}>
+              <Text accessibilityRole="alert" style={styles.errorText}>Saved highlights could not be read from this device.</Text>
+              <Pressable accessibilityRole="button" onPress={() => { void loadHighlights(); }} style={styles.rowButton}>
+                <Text style={styles.rowButtonText}>Retry</Text>
+              </Pressable>
+            </View>
+          ) : null}
+          {listState.status === 'ready' && listState.unreadable > 0 ? (
+            <Text accessibilityRole="alert" style={styles.errorText}>
+              {listState.unreadable} saved highlight{listState.unreadable === 1 ? '' : 's'} could not be read and {listState.unreadable === 1 ? 'is' : 'are'} not shown.
+            </Text>
+          ) : null}
+          {listState.status === 'ready' && highlights.length === 0 ? (
+            <Text style={styles.selectionHint}>No saved highlights for this book yet. Select a passage, then choose Save highlight.</Text>
+          ) : null}
+          <ScrollView style={styles.highlightScroll}>
+            {highlights.map(highlight => (
+              <View key={highlight.id} style={styles.highlightRow}>
+                <Text numberOfLines={2} style={styles.highlightQuote}>{highlight.annotation.quote.exact.trim()}</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Go to highlight: ${highlight.annotation.quote.exact.trim().slice(0, 60)}`}
+                  accessibilityState={{ disabled: jump !== null || closing || readyGeneration === 0, busy: jump?.id === highlight.id }}
+                  disabled={jump !== null || closing || readyGeneration === 0}
+                  onPress={() => goToHighlight(highlight)}
+                  style={styles.rowButton}
+                >
+                  <Text style={styles.rowButtonText}>{jump?.id === highlight.id ? 'Checking…' : 'Go to'}</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Delete highlight: ${highlight.annotation.quote.exact.trim().slice(0, 60)}`}
+                  accessibilityState={{ disabled: deletingId !== null || closing, busy: deletingId === highlight.id }}
+                  disabled={deletingId !== null || closing}
+                  onPress={() => deleteHighlight(highlight)}
+                  style={styles.rowButton}
+                >
+                  <Text style={styles.deleteText}>{deletingId === highlight.id ? 'Deleting…' : 'Delete'}</Text>
+                </Pressable>
+              </View>
+            ))}
+          </ScrollView>
         </View>
       ) : null}
       {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
       {positionError ? <Text accessibilityRole="alert" style={styles.error}>{positionError}</Text> : null}
       {reader.isLoading ? <ActivityIndicator accessibilityLabel="Loading book" style={styles.loading} color="#356B52" /> : null}
     </View>
+  );
+}
+
+// One ReaderProvider per open book, so no engine state (section, annotations, location) from a
+// previously opened book can reach this one.
+function ReaderScreen({ book, onClose }: { book: OpenBook; onClose: () => void }) {
+  return (
+    <ReaderProvider>
+      <ReaderSurface book={book} onClose={onClose} />
+    </ReaderProvider>
   );
 }
 
@@ -133,7 +469,7 @@ export default function HomeScreen() {
     );
   }
 
-  if (book) return <ReaderSurface book={book} onClose={() => { setBook(null); setMessage(''); }} />;
+  if (book) return <ReaderScreen key={book.id} book={book} onClose={() => { setBook(null); setMessage(''); }} />;
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -154,7 +490,7 @@ export default function HomeScreen() {
             {busy ? <ActivityIndicator color="#F7F3E8" /> : <Text style={styles.openButtonText}>Choose an EPUB</Text>}
           </Pressable>
           {message ? <Text accessibilityRole="alert" style={styles.message}>{message}</Text> : null}
-          <Text style={styles.note}>Re-select the exact same EPUB to resume. Leafellow keeps only one reading position and the file’s content hash; it does not copy the book.</Text>
+          <Text style={styles.note}>Re-select the exact same EPUB to resume. Leafellow stores one reading position, the file’s content hash and your private highlights locally on this device, with no automatic upload; it does not copy the book.</Text>
           <Pressable accessibilityRole="button" onPress={forgetPosition} style={styles.clearButton}>
             <Text style={styles.clearButtonText}>Forget saved position</Text>
           </Pressable>
@@ -195,6 +531,19 @@ const styles = StyleSheet.create({
   selectionScroll: { maxHeight: 90 },
   selectionText: { color: '#18312B', fontSize: 15, lineHeight: 22 },
   selectionHint: { color: '#5D6D60', fontSize: 11, marginTop: 9, lineHeight: 15 },
+  saveButton: { minHeight: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#173F35', marginTop: 10 },
+  saveButtonText: { color: '#F7F3E8', fontSize: 15, fontWeight: '700' },
+  notice: { color: '#356B52', fontSize: 13, lineHeight: 19, paddingHorizontal: 12, paddingVertical: 4 },
+  highlightToggle: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 16, borderTopWidth: 1, borderColor: '#E1E8DE' },
+  highlightToggleText: { color: '#173F35', fontSize: 14, fontWeight: '600' },
+  highlightPanel: { maxHeight: 220, paddingHorizontal: 12, paddingBottom: 8, gap: 6 },
+  highlightScroll: { maxHeight: 180 },
+  highlightRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 },
+  highlightQuote: { flex: 1, color: '#18312B', fontSize: 14, lineHeight: 20 },
+  rowButton: { minHeight: 44, minWidth: 44, justifyContent: 'center', paddingHorizontal: 6 },
+  rowButtonText: { color: '#173F35', fontSize: 14, fontWeight: '600' },
+  deleteText: { color: '#8D3535', fontSize: 14, fontWeight: '600' },
+  errorText: { flex: 1, color: '#8D3535', fontSize: 13, lineHeight: 19 },
   error: { color: '#8D3535', fontSize: 14, lineHeight: 20, padding: 12, backgroundColor: '#FCEEEE', borderRadius: 12 },
   loading: { position: 'absolute', top: 86, alignSelf: 'center' },
 });
