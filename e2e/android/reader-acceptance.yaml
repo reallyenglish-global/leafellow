@@ -69,8 +69,13 @@ name: Leafellow Android reader acceptance
 - runFlow: pick-fixture.yaml
 - assertVisible: "Resumed from this book’s last saved reading position\\."
 - assertVisible: "Show highlights \\(1\\)"
-# A resume note alone does not prove we reopened away from the saved passage.
+# A resume note alone does not prove we reopened away from the saved passage. Require actual
+# rendered paragraph text first, so an empty/loading WebView cannot satisfy the absence check.
+- extendedWaitUntil:
+    visible: "Paragraph [0-9]+ of the acceptance chapter.*"
+    timeout: 30000
 - assertNotVisible: "Luminous"
+- takeScreenshot: reader-resumed-away
 - tapOn:
     id: "highlights-toggle"
 - assertVisible: "Hide highlights \\(1\\)"
@@ -89,6 +94,7 @@ name: Leafellow Android reader acceptance
     text: "Luminous"
     above:
       id: "highlights-toggle"
+- takeScreenshot: reader-returned-to-passage
 
 # 6. Privacy preview and acknowledgement, then the real system folder picker.
 - tapOn:

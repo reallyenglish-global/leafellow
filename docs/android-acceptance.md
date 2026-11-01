@@ -1,6 +1,6 @@
 # Android reader acceptance
 
-**Status: provisional.** The workflow, flow and tooling are implemented and checked on the host. **The native flow has not run yet.** Nothing here counts as Android acceptance until a hosted CI run passes and its evidence artifact has been reviewed. iOS is separate and not covered: [`ios.yml`](../.github/workflows/ios.yml) is only a build and launch smoke test.
+**Status: provisional.** The workflow, flow and tooling are implemented and checked on the host. **No native acceptance pass yet:** the first runtime reached file import but stalled before rendering; the transport fix awaits a new hosted run. Nothing here counts as Android acceptance until a hosted CI run passes and its evidence artifact has been reviewed. iOS is separate and not covered: [`ios.yml`](../.github/workflows/ios.yml) is only a build and launch smoke test.
 
 ## What it exercises
 
@@ -18,6 +18,16 @@
 After the flow, [`scripts/android-acceptance-run.sh`](../scripts/android-acceptance-run.sh) pulls the shared folder with `adb` and runs [`scripts/android_export_check.py`](../scripts/android_export_check.py). The check requires exactly one file named `leafellow-highlights-<first 12 hex of the fixture hash>-<id>.json`, the exact envelope keys, `source.documentId` equal to the fixture's `sha256:`, `count` 1, one private v1 record for that source with quote exactly `Luminous`, and an EPUB range CFI. A missing folder, an empty folder or extra files all fail.
 
 No step is optional. Navigation inside the system file picker is conditional, because it may open on Recent or Downloads, but choosing the file is not. There is no `continueOnError`, no test-only route, no seeded database and no injected JavaScript selection.
+
+## Renderer transport regression
+
+The first hosted run built and installed the Release APK and selected the fixture through DocumentsUI, but the reader stayed on Opening before text appeared. Android's picker returns a native `content://` URI; the installed EPUB engine passes its source to browser-side epub.js rather than reading it through Android's ContentResolver.
+
+The app now stages the exact already-validated bytes in its own app-cache namespace when a source cannot be safely handed directly to the engine. The renderer receives a short `file:///…​.epub` URI, not the SAF URI or a base64 book embedded in its persistent HTML. Raw quote/backslash/script-delimiter paths are staged too, because the installed engine interpolates its source into a JavaScript literal. Safe existing iOS file URIs retain their prior path.
+
+Only the operation's own newly-created file may be removed after a partial write; a failed exclusive creation must not delete an existing file. Cleanup is attempted on close, import failure, unmount and next startup. A crash or deletion failure can leave a temporary copy in cache until a later cleanup; no backup/secure-erasure guarantee is made. This is not a retained book library, an upload, or permission to execute book scripts. `allowScriptedContent` remains false. A bounded opening timeout now shows a useful error rather than an unexplained endless spinner.
+
+Host regression tests cover this boundary and lifecycle. **A fresh hosted native run is still required to prove the fix**, and later selection/export steps remain unverified until that run completes.
 
 ## Fixture
 
@@ -40,8 +50,8 @@ No step is optional. Navigation inside the system file picker is conditional, be
 | Export checker shape and failure cases | yes | host tests |
 | Wrapper exit-code propagation, bounded diagnostics (fake adb/maestro) | yes | host tests, not native |
 | Workflow syntax (`actionlint`), wrapper (`bash -n`, `shellcheck`) | yes | host |
-| Release APK builds from prebuild | yes | **not run** |
-| Picker, long press, save, restart, return-to, export, delete on emulator | yes | **not run** |
+| Release APK builds from prebuild | yes | previous head built; current transport fix pending |
+| Picker, long press, save, restart, return-to, export, delete on emulator | yes | previous head failed before rendering; current fix pending |
 | iOS acceptance | no | out of scope |
 
 ## Known runtime risks (to confirm on the first hosted run)

@@ -34,8 +34,13 @@ import { clearLastReadingPosition, loadLastReadingPosition, saveLastReadingPosit
 import { HighlightExportUnreadableError, HighlightOutcomeUnknownError, type SavedHighlight } from '../../../../src/storage/saved-highlights';
 import { createSerialWriter } from '../../../../src/storage/serial-writes';
 import { systemFolderDestination } from '../highlight-export-destination';
+import { createAppRendererSources } from '../reader-source-fs';
 
-type OpenBook = { name: string; uri: string; id: string; resumeCfi: string | null };
+// uri is what the renderer loads: the picked file itself, or an app-owned temporary cache copy of
+// its validated bytes (Android). release removes that copy, if any.
+type OpenBook = { name: string; uri: string; id: string; resumeCfi: string | null; release: () => void };
+// The renderer reports no error when its WebView never loads the book, so stop waiting honestly.
+const READER_OPEN_TIMEOUT_MS = 30_000;
 type ListState = { status: 'loading' } | { status: 'error' } | { status: 'ready'; unreadable: number };
 const plural = (count: number) => `${count} highlight${count === 1 ? '' : 's'}`;
 
@@ -112,6 +117,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
   // Bumped on every engine onReady, including WebView reloads, which drop all drawn marks.
   const [readyGeneration, setReadyGeneration] = useState(0);
   const [markError, setMarkError] = useState('');
+  const [openStalled, setOpenStalled] = useState(false);
   const reader = useReader();
   const readerRef = useRef(reader);
   const [writer] = useState(createSerialWriter);
@@ -156,6 +162,15 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
   }, [loadHighlights]);
 
   useEffect(() => { readerRef.current = reader; });
+
+  useEffect(() => {
+    if (readyGeneration > 0) {
+      setOpenStalled(false);
+      return;
+    }
+    const timer = setTimeout(() => setOpenStalled(true), READER_OPEN_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [readyGeneration]);
 
   // Reconcile drawn marks with the stored list for the current WebView instance only.
   useEffect(() => {
@@ -565,6 +580,11 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
         </View>
       ) : null}
       {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
+      {openStalled && !error ? (
+        <Text accessibilityRole="alert" testID="reader-open-error" style={styles.error}>
+          This book did not finish opening. Go back to the library and choose it again.
+        </Text>
+      ) : null}
       {positionError ? <Text accessibilityRole="alert" style={styles.error}>{positionError}</Text> : null}
       {reader.isLoading ? <ActivityIndicator accessibilityLabel="Loading book" style={styles.loading} color="#356B52" /> : null}
     </View>
@@ -586,6 +606,27 @@ export default function HomeScreen() {
   const [book, setBook] = useState<OpenBook | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [rendererSources] = useState(createAppRendererSources);
+  const openBook = useRef<OpenBook | null>(null);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    // Removes temporary copies left behind if the app stopped while a book was open.
+    rendererSources.sweep();
+    return () => {
+      mounted.current = false;
+      openBook.current?.release();
+      openBook.current = null;
+    };
+  }, [rendererSources]);
+
+  function closeBook() {
+    openBook.current?.release();
+    openBook.current = null;
+    setBook(null);
+    setMessage('');
+  }
 
   async function openEpub() {
     setBusy(true);
@@ -595,9 +636,23 @@ export default function HomeScreen() {
       if (picked.canceled) return;
       const file = picked.result;
       validateEpubFile(file.name, file.size);
-      const inspected = await inspectEpub(new Uint8Array(await file.arrayBuffer()));
-      const saved = await loadLastReadingPosition(db, inspected.id);
-      setBook({ name: file.name, uri: file.uri, id: inspected.id, resumeCfi: saved?.cfi ?? null });
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const inspected = await inspectEpub(bytes);
+      // The renderer gets exactly these validated bytes; the picked file is never read again.
+      const source = await rendererSources.prepare(file.uri, bytes);
+      try {
+        const saved = await loadLastReadingPosition(db, inspected.id);
+        if (!mounted.current) {
+          source.release();
+          return;
+        }
+        const next: OpenBook = { name: file.name, uri: source.uri, id: inspected.id, resumeCfi: saved?.cfi ?? null, release: source.release };
+        openBook.current = next;
+        setBook(next);
+      } catch (error) {
+        source.release();
+        throw error;
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'The EPUB could not be opened.');
     } finally {
@@ -624,7 +679,7 @@ export default function HomeScreen() {
     );
   }
 
-  if (book) return <ReaderScreen key={book.id} book={book} onClose={() => { setBook(null); setMessage(''); }} />;
+  if (book) return <ReaderScreen key={book.id} book={book} onClose={closeBook} />;
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -646,7 +701,7 @@ export default function HomeScreen() {
             {busy ? <ActivityIndicator color="#F7F3E8" /> : <Text style={styles.openButtonText}>Choose an EPUB</Text>}
           </Pressable>
           {message ? <Text accessibilityRole="alert" style={styles.message}>{message}</Text> : null}
-          <Text style={styles.note}>Re-select the exact same EPUB to resume. Leafellow stores one reading position, the file’s content hash and your private highlights locally on this device, with no automatic upload; it does not copy the book.</Text>
+          <Text style={styles.note}>Re-select the same EPUB to resume. Positions and private highlights are stored locally, with no automatic upload. Some files need a temporary reading copy in app cache; cleanup is attempted on close and next start. A crash or cleanup error may leave it there until a later cleanup.</Text>
           <Pressable accessibilityRole="button" onPress={forgetPosition} style={styles.clearButton}>
             <Text style={styles.clearButtonText}>Forget saved position</Text>
           </Pressable>
