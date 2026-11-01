@@ -2,7 +2,7 @@
 
 ## Scope
 
-The Android/iOS reader can save a selected EPUB passage as a private, local highlight, list a book's highlights when the same exact EPUB is reopened, show them as renderer highlight marks, return to one, and delete one. Export, sync, sharing, AI, PDF and web reading are not part of this slice. The web route remains an informational placeholder.
+The Android/iOS reader can save a selected EPUB passage as a private, local highlight, list a book's highlights when the same exact EPUB is reopened, show them as renderer highlight marks, return to one, and delete one. Sync, sharing, AI, PDF and web reading are not part of this slice. User-directed export is the next slice: see [highlight export](highlight-export.md). The web route remains an informational placeholder.
 
 ## Engine contract actually used
 

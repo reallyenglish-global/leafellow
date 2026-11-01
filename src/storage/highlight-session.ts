@@ -2,6 +2,7 @@
 import {
   deleteSavedHighlight,
   listSavedHighlights,
+  readHighlightsForExport,
   saveHighlightWithStatus,
   type HighlightDatabase,
   type HighlightInput,
@@ -19,6 +20,8 @@ export type HighlightSession = {
   load(): Promise<HighlightLoad>;
   save(input: HighlightInput): Promise<{ highlight: SavedHighlight; created: boolean }>;
   remove(id: string): Promise<boolean>;
+  /** Every validated row after all queued work; rejects if any row is unreadable. */
+  exportSnapshot(): Promise<SavedHighlight[]>;
 };
 
 /**
@@ -44,6 +47,9 @@ export function createHighlightSession(db: HighlightDatabase, documentId: string
     },
     remove(id) {
       return writer.run(() => deleteSavedHighlight(db, documentId, id));
+    },
+    exportSnapshot() {
+      return writer.run(() => readHighlightsForExport(db, documentId));
     },
   };
 }

@@ -21,13 +21,64 @@ import {
   type PassageJumpRequest,
 } from '../../../../src/reader/passage-jump';
 import { normalizeEpubReaderProgress } from '../../../../src/reader/reader-progress';
+import {
+  createExportGuard,
+  exportFileName,
+  runHighlightExport,
+  serializeHighlightExport,
+  type ExportOutcome,
+} from '../../../../src/storage/highlight-export';
+import { createExportFlow, type ExportFlowResult, type ExportFlowState } from '../../../../src/storage/highlight-export-flow';
 import { createHighlightSession } from '../../../../src/storage/highlight-session';
 import { clearLastReadingPosition, loadLastReadingPosition, saveLastReadingPosition } from '../../../../src/storage/reading-position';
-import { HighlightOutcomeUnknownError, type SavedHighlight } from '../../../../src/storage/saved-highlights';
+import { HighlightExportUnreadableError, HighlightOutcomeUnknownError, type SavedHighlight } from '../../../../src/storage/saved-highlights';
 import { createSerialWriter } from '../../../../src/storage/serial-writes';
+import { systemFolderDestination } from '../highlight-export-destination';
 
 type OpenBook = { name: string; uri: string; id: string; resumeCfi: string | null };
 type ListState = { status: 'loading' } | { status: 'error' } | { status: 'ready'; unreadable: number };
+const plural = (count: number) => `${count} highlight${count === 1 ? '' : 's'}`;
+
+function describeExport(outcome: ExportOutcome, count: number): { message: string; failed: boolean } {
+  switch (outcome.status) {
+    case 'written':
+      // The requested name is reported as requested: a storage provider may store it under another name.
+      return { failed: false, message: `Exported ${plural(count)} to the folder you chose and checked the file by reading it back. Leafellow asked for the name ${outcome.fileName}; some storage providers save it under a different name. Leafellow does not upload it; the storage provider for that folder may sync it.` };
+    case 'cancelled':
+      return { failed: false, message: 'Export cancelled. No file was created.' };
+    case 'not-completed':
+      return { failed: true, message: 'The folder could not be opened, so nothing was exported.' };
+    case 'failed':
+      if (outcome.stage === 'exists') return { failed: true, message: 'A file with the export name already exists there. Leafellow did not write to it or remove it, and nothing was exported.' };
+      if (outcome.stage === 'create') return { failed: true, message: 'The export file could not be created in that folder, so nothing was exported. Some storage providers can leave an empty file behind; Leafellow did not write to it or remove it.' };
+      if (outcome.cleanup === 'failed') {
+        return { failed: true, message: 'The export could not be written and checked, and the new file could not be removed. An incomplete export file may remain in that folder; do not rely on it.' };
+      }
+      return { failed: true, message: 'The export could not be written and checked, so the new file was removed. Nothing was exported.' };
+  }
+}
+
+function describeExportResult(result: ExportFlowResult): { message: string; failed: boolean } {
+  switch (result.kind) {
+    case 'empty':
+      return { failed: false, message: 'This book has no saved highlights yet, so there is nothing to export.' };
+    case 'prepare-failed':
+      return {
+        failed: true,
+        message: result.reason instanceof HighlightExportUnreadableError
+          ? `${plural(result.reason.unreadable)} could not be read, so no partial export was made. Nothing was written.`
+          : 'Saved highlights could not be prepared for export. Nothing was written.',
+      };
+    case 'outcome':
+      return describeExport(result.outcome, result.count);
+    case 'error':
+      return { failed: true, message: 'The export could not be completed. Do not rely on any file it may have created.' };
+  }
+}
+
+function exportId(): string {
+  return `${Date.now().toString(36)}${Math.floor(Math.random() * 0x100000000).toString(36)}`;
+}
 
 const HIGHLIGHT_STYLE = { color: '#E8C547', opacity: 0.45 };
 // Module-level so its identity is stable: Reader reloads the whole WebView when defaultTheme changes.
@@ -65,7 +116,23 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
   const readerRef = useRef(reader);
   const [writer] = useState(createSerialWriter);
   const [session] = useState(() => createHighlightSession(db, book.id, writer));
+  // Held from snapshot through preview, folder picker and write; saves, deletes and close wait.
+  const [exportGuard] = useState(createExportGuard);
+  const [exportState, setExportState] = useState<ExportFlowState>({ status: 'idle' });
   const active = useRef(true);
+  // Handlers ask the flow, not exportState: two taps before a re-render must not act on stale state.
+  const [exportFlow] = useState(() => createExportFlow({
+    guard: exportGuard,
+    async prepare() {
+      // Queued behind every accepted save and delete, and no new ones start while the guard is held.
+      const snapshot = await session.exportSnapshot();
+      return { count: snapshot.length, text: serializeHighlightExport(book.id, snapshot) };
+    },
+    fileName: () => exportFileName(book.id, exportId()),
+    run: ({ text, fileName }) => runHighlightExport({ text, fileName, destination: systemFolderDestination }),
+    isActive: () => active.current,
+    onChange: state => { if (active.current) setExportState(state); },
+  }));
   const currentHref = useRef<string | null>(null);
   const applied = useRef(new Set<string>());
   const pendingJump = useRef<PassageJumpRequest | null>(null);
@@ -178,7 +245,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
 
   function saveSelection() {
     const pending = selection;
-    if (!pending || saving || writer.isClosed() || listState.status !== 'ready') return;
+    if (!pending || saving || writer.isClosed() || exportGuard.isBusy() || listState.status !== 'ready') return;
     if (!isSelectionCurrent(pending, { documentId: book.id, href: currentHref.current })) {
       setSelection(null);
       setSelectionNotice('The reader moved since this passage was selected. Select it again to save it.');
@@ -230,7 +297,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
   }
 
   function deleteHighlight(highlight: SavedHighlight) {
-    if (deletingId || writer.isClosed()) return;
+    if (deletingId || writer.isClosed() || exportGuard.isBusy()) return;
     setDeletingId(highlight.id);
     setHighlightMessage('');
     setHighlightError('');
@@ -253,10 +320,29 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
       .finally(() => { if (active.current) setDeletingId(null); });
   }
 
-  const canSave = !saving && !closing && listState.status === 'ready';
+  function startExport() {
+    if (closing || writer.isClosed()) return;
+    if (!exportFlow.start()) return;
+    setHighlightMessage('');
+    setHighlightError('');
+  }
+
+  function cancelExport() {
+    exportFlow.cancel();
+  }
+
+  function confirmExport() {
+    void exportFlow.confirm();
+  }
+
+  const exportResult = exportState.status === 'finished' ? describeExportResult(exportState.result) : null;
+
+  const exportBusy = exportState.status === 'preparing' || exportState.status === 'preview' || exportState.status === 'writing';
+  const canSave = !saving && !closing && !exportBusy && listState.status === 'ready';
+  const canExport = !closing && !exportBusy && listState.status === 'ready' && highlights.length > 0;
 
   async function closeReader() {
-    if (closing) return;
+    if (closing || exportGuard.isBusy()) return;
     setClosing(true);
     setSelection(null);
     pendingJump.current = null;
@@ -270,9 +356,10 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
       <View style={styles.readerHeader}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={closing ? 'Finishing saves before returning to library' : 'Back to library'}
-          accessibilityState={{ disabled: closing }}
-          disabled={closing}
+          accessibilityLabel={closing ? 'Finishing saves before returning to library'
+            : exportBusy ? 'Back to library, unavailable until the export finishes or is cancelled' : 'Back to library'}
+          accessibilityState={{ disabled: closing || exportBusy }}
+          disabled={closing || exportBusy}
           onPress={() => { void closeReader(); }}
           style={styles.backButton}
         >
@@ -378,7 +465,67 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
             </Text>
           ) : null}
           {listState.status === 'ready' && highlights.length === 0 ? (
-            <Text style={styles.selectionHint}>No saved highlights for this book yet. Select a passage, then choose Save highlight.</Text>
+            <Text style={styles.selectionHint}>No saved highlights for this book yet. Select a passage, then choose Save highlight. Export becomes available once a highlight is saved.</Text>
+          ) : null}
+          {exportState.status === 'preview' ? (
+            <View style={styles.exportCard}>
+              <Text accessibilityRole="header" style={styles.selectionLabel}>EXPORT THIS BOOK’S HIGHLIGHTS</Text>
+              <Text style={styles.exportText}>
+                {plural(exportState.count)} from this book only, as one JSON file. It contains the exact highlighted passages, any notes, their positions in this EPUB and the book’s content hash. It does not contain the book itself.
+              </Text>
+              <Text style={styles.exportText}>
+                Leafellow writes the file only to the folder you choose next and does not upload it. If that folder belongs to a cloud or synced storage provider, that provider may sync it.
+              </Text>
+              <Pressable
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: exportState.acknowledged }}
+                accessibilityLabel="I understand the exported file leaves Leafellow’s private storage"
+                onPress={() => {
+                  const current = exportFlow.state();
+                  if (current.status === 'preview') exportFlow.setAcknowledged(!current.acknowledged);
+                }}
+                style={styles.checkRow}
+              >
+                <Text style={styles.checkBox}>{exportState.acknowledged ? '☑' : '☐'}</Text>
+                <Text style={styles.exportText}>I understand the file leaves Leafellow’s private storage.</Text>
+              </Pressable>
+              <View style={styles.exportActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Choose a folder and export ${plural(exportState.count)}`}
+                  accessibilityState={{ disabled: !exportState.acknowledged }}
+                  disabled={!exportState.acknowledged}
+                  onPress={confirmExport}
+                  style={({ pressed }) => [styles.saveButton, styles.exportButton, pressed && styles.pressed, !exportState.acknowledged && styles.disabled]}
+                >
+                  <Text style={styles.saveButtonText}>Choose folder and export</Text>
+                </Pressable>
+                <Pressable accessibilityRole="button" accessibilityLabel="Cancel export" onPress={cancelExport} style={styles.rowButton}>
+                  <Text style={styles.rowButtonText}>Cancel</Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Export this book’s ${plural(highlights.length)} to a folder you choose`}
+              accessibilityState={{ disabled: !canExport, busy: exportBusy }}
+              disabled={!canExport}
+              onPress={startExport}
+              style={[styles.rowButton, !canExport && styles.disabled]}
+            >
+              <Text style={styles.rowButtonText}>
+                {exportState.status === 'preparing' ? 'Preparing export…'
+                  : exportState.status === 'writing' ? 'Exporting… do not close the app'
+                    : highlights.length === 0 ? 'Export highlights (none saved yet)' : 'Export highlights…'}
+              </Text>
+            </Pressable>
+          )}
+          {exportResult ? (
+            <Text accessibilityRole={exportResult.failed ? 'alert' : undefined} accessibilityLiveRegion="polite"
+              style={exportResult.failed ? styles.errorText : styles.notice}>
+              {exportResult.message}
+            </Text>
           ) : null}
           <ScrollView style={styles.highlightScroll}>
             {highlights.map(highlight => (
@@ -397,8 +544,8 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={`Delete highlight: ${highlight.annotation.quote.exact.trim().slice(0, 60)}`}
-                  accessibilityState={{ disabled: deletingId !== null || closing, busy: deletingId === highlight.id }}
-                  disabled={deletingId !== null || closing}
+                  accessibilityState={{ disabled: deletingId !== null || closing || exportBusy, busy: deletingId === highlight.id }}
+                  disabled={deletingId !== null || closing || exportBusy}
                   onPress={() => deleteHighlight(highlight)}
                   style={styles.rowButton}
                 >
@@ -536,7 +683,7 @@ const styles = StyleSheet.create({
   notice: { color: '#356B52', fontSize: 13, lineHeight: 19, paddingHorizontal: 12, paddingVertical: 4 },
   highlightToggle: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 16, borderTopWidth: 1, borderColor: '#E1E8DE' },
   highlightToggleText: { color: '#173F35', fontSize: 14, fontWeight: '600' },
-  highlightPanel: { maxHeight: 220, paddingHorizontal: 12, paddingBottom: 8, gap: 6 },
+  highlightPanel: { maxHeight: 420, paddingHorizontal: 12, paddingBottom: 8, gap: 6 },
   highlightScroll: { maxHeight: 180 },
   highlightRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 },
   highlightQuote: { flex: 1, color: '#18312B', fontSize: 14, lineHeight: 20 },
@@ -544,6 +691,12 @@ const styles = StyleSheet.create({
   rowButtonText: { color: '#173F35', fontSize: 14, fontWeight: '600' },
   deleteText: { color: '#8D3535', fontSize: 14, fontWeight: '600' },
   errorText: { flex: 1, color: '#8D3535', fontSize: 13, lineHeight: 19 },
+  exportCard: { padding: 12, borderRadius: 12, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E1E8DE', gap: 6 },
+  exportText: { flex: 1, color: '#18312B', fontSize: 13, lineHeight: 19 },
+  checkRow: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  checkBox: { color: '#173F35', fontSize: 20 },
+  exportActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  exportButton: { flex: 1, marginTop: 0, paddingHorizontal: 12 },
   error: { color: '#8D3535', fontSize: 14, lineHeight: 20, padding: 12, backgroundColor: '#FCEEEE', borderRadius: 12 },
   loading: { position: 'absolute', top: 86, alignSelf: 'center' },
 });
