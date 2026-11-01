@@ -133,6 +133,19 @@ test('missing relocation fails closed and removes its listener before the host d
   assert.equal(calls.listener, null);
 });
 
+test('the relocation deadline removes its listener even when source text never resolves', async () => {
+  let state;
+  runInFakeEngine(request(), {
+    deferRelocation: true,
+    bookRange: () => new Promise(() => {}),
+    setTimeout: callback => setTimeout(callback, 1),
+    observe: value => { state = value; },
+  });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(state.calls.listener, null);
+  assert.equal(state.posted.length, 0, 'without verified source text the host must time out, not confirm');
+});
+
 test('fails closed when the text, the rendered view, display or the engine do not cooperate', async () => {
   const cases = [
     [{ bookRange: () => Promise.resolve(textRange('Alice was beginning to G')) }, 'text-mismatch'],

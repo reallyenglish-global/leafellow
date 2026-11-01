@@ -87,7 +87,7 @@ const PAGE_FUNCTION = `function (req) {
     // display resolves. Subscribe first: display of an already-visible target still reports it.
     var reported = new Promise(function (resolve) {
       var onRelocated = function (location) { resolve(location); };
-      var timer = setTimeout(function () { resolve(null); }, ${PASSAGE_JUMP_TIMEOUT_MS - 1000});
+      var timer = setTimeout(function () { stopWatching(); resolve(null); }, ${PASSAGE_JUMP_TIMEOUT_MS - 1000});
       stopWatching = function () {
         clearTimeout(timer);
         rendition.off('relocated', onRelocated);
