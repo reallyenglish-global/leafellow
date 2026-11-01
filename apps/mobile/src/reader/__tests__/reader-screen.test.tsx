@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react-native';
+import { AppState } from 'react-native';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 
 import { latestReaderProps, makeBook, openTestDatabase, resetEngineMock } from './engine-mock';
+import { loadLastReadingPosition } from '../../../../../src/storage/reading-position';
 import { saveHighlight } from '../../../../../src/storage/saved-highlights';
 import { systemFolderDestination } from '../../highlight-export-destination';
 import { ReaderScreen } from '../reader-screen';
@@ -33,7 +35,18 @@ async function select(text = 'Luminous', cfi = SELECTION_CFI) {
   await act(() => { props().onSelected?.(text, cfi); });
 }
 
+// Every statement the test database ran that wrote a reading position.
+function positionWrites(db: object) {
+  return (db as { statements: string[] }).statements.filter(statement => statement.includes('INSERT INTO last_reading_position'));
+}
+
+function relocate(cfi: string) {
+  props().onLocationChange?.(1, { start: { href: 'c1.xhtml', cfi } } as never, 10 as never, 0 as never);
+}
+
 afterEach(() => {
+  jest.useRealTimers();
+  jest.restoreAllMocks();
   cleanup();
   resetEngineMock();
 });
@@ -113,4 +126,53 @@ test('the header clears the status bar inset and the engine gets the measured fr
   await measureFrame();
 
   expect(latestReaderProps()).toMatchObject({ width: 400, height: 600, allowScriptedContent: false });
+});
+
+test('scroll relocations are coalesced into one position write', async () => {
+  jest.useFakeTimers();
+  const db = await openTestDatabase();
+  const book = makeBook();
+  await render(<ReaderScreen book={book} onClose={jest.fn()} />);
+  await measureFrame();
+  await engineReady();
+
+  await act(() => {
+    relocate('epubcfi(/6/4!/4/2/1:0)');
+    relocate('epubcfi(/6/4!/4/2/1:5)');
+    relocate('epubcfi(/6/4!/4/2/1:9)');
+  });
+
+  expect(positionWrites(db)).toHaveLength(0);
+  await act(() => jest.advanceTimersByTimeAsync(750));
+  expect(positionWrites(db)).toHaveLength(1);
+  expect(await loadLastReadingPosition(db, book.id)).toMatchObject({ cfi: 'epubcfi(/6/4!/4/2/1:9)' });
+});
+
+test('backgrounding the app and closing the reader write the pending position', async () => {
+  jest.useFakeTimers();
+  const db = await openTestDatabase();
+  const handlers: ((state: string) => void)[] = [];
+  jest.spyOn(AppState, 'addEventListener').mockImplementation(((_type: string, handler: (state: string) => void) => {
+    handlers.push(handler);
+    return { remove: jest.fn() };
+  }) as never);
+  const onClose = jest.fn();
+
+  await render(<ReaderScreen book={makeBook()} onClose={onClose} />);
+  await measureFrame();
+  await engineReady();
+
+  await act(() => { relocate('epubcfi(/6/4!/4/2/1:7)'); });
+  expect(positionWrites(db)).toHaveLength(0);
+  await act(async () => {
+    handlers.forEach(handler => handler('background'));
+    await jest.advanceTimersByTimeAsync(0);
+  });
+  expect(positionWrites(db)).toHaveLength(1);
+
+  await act(() => { relocate('epubcfi(/6/4!/4/2/1:3)'); });
+  expect(positionWrites(db)).toHaveLength(1);
+  await fireEvent.press(screen.getByTestId('reader-back'));
+  await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+  expect(positionWrites(db)).toHaveLength(2);
 });

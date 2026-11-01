@@ -3,7 +3,7 @@ import { Reader, ReaderProvider, useReader } from '@epubjs-react-native/core';
 import { useFileSystem } from '@epubjs-react-native/expo-file-system';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
+import { ActivityIndicator, AppState, Pressable, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import { useSQLiteContext } from 'expo-sqlite';
 
 import { captureSelection, isSelectionCurrent, type PendingSelection } from '../../../../src/reader/highlight-selection';
@@ -27,6 +27,7 @@ import {
 } from '../../../../src/storage/highlight-export';
 import { createExportFlow, type ExportFlowResult, type ExportFlowState } from '../../../../src/storage/highlight-export-flow';
 import { createHighlightSession } from '../../../../src/storage/highlight-session';
+import { createLatestWriter } from '../../../../src/storage/latest-writer';
 import { saveLastReadingPosition } from '../../../../src/storage/reading-position';
 import { HighlightExportUnreadableError, HighlightOutcomeUnknownError, type SavedHighlight } from '../../../../src/storage/saved-highlights';
 import { createSerialWriter } from '../../../../src/storage/serial-writes';
@@ -127,6 +128,14 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
   const [exportGuard] = useState(createExportGuard);
   const [exportState, setExportState] = useState<ExportFlowState>({ status: 'idle' });
   const active = useRef(true);
+  // Scroll relocations arrive in bursts; only the newest position is written, after a short pause.
+  const [positionWriter] = useState(() => createLatestWriter<{ documentId: string; cfi: string; progress: number; updatedAt: number }>(
+    position => writer.run(() => saveLastReadingPosition(db, position)).then(
+      () => { if (active.current) setPositionError(''); },
+      () => { if (active.current) setPositionError('The reading position could not be saved on this device.'); },
+    ),
+    { delayMs: 750 },
+  ));
   // Handlers ask the flow, not exportState: two taps before a re-render must not act on stale state.
   const [exportFlow] = useState(() => createExportFlow({
     guard: exportGuard,
@@ -163,6 +172,13 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
   }, [loadHighlights]);
 
   useEffect(() => { readerRef.current = reader; });
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', state => {
+      if (state !== 'active') void positionWriter.flush();
+    });
+    return () => subscription.remove();
+  }, [positionWriter]);
 
   useEffect(() => {
     if (readyGeneration > 0) {
@@ -235,10 +251,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
 
   function saveLocation(cfi: string, progressFraction: number) {
     if (writer.isClosed()) return;
-    const position = { documentId: book.id, cfi, progress: progressFraction, updatedAt: Date.now() };
-    writer.run(() => saveLastReadingPosition(db, position))
-      .then(() => { if (active.current) setPositionError(''); })
-      .catch(() => { if (active.current) setPositionError('The reading position could not be saved on this device.'); });
+    positionWriter.set({ documentId: book.id, cfi, progress: progressFraction, updatedAt: Date.now() });
   }
 
   function handleSelected(text: string, cfiRange: string) {
@@ -362,6 +375,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
     setClosing(true);
     setSelection(null);
     pendingJump.current = null;
+    await positionWriter.close();
     await writer.close();
     active.current = false;
     onClose();
