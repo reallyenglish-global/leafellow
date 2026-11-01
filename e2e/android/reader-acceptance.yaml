@@ -15,8 +15,14 @@ name: Leafellow Android reader acceptance
 - runFlow: pick-fixture.yaml
 
 # 2. Native long press on the isolated opening word in the rendered EPUB.
+# WebView retains offscreen text nodes with zero height (observed in run 41313612875).
+# Maestro 2.12 sizeMatches is abs(actual-target)<=tolerance: this requires 1..1999px,
+# excluding zero-area nodes without dropping any mandatory visibility assertion.
 - extendedWaitUntil:
-    visible: "Luminous"
+    visible:
+      text: "Luminous"
+      height: 1000
+      tolerance: 999
     timeout: 60000
 - assertVisible: "Show highlights \\(0\\)"
 - longPressOn: "Luminous"
@@ -49,7 +55,10 @@ name: Leafellow Android reader acceptance
     end: 50%, 20%
     duration: 400
 # The highlight panel is closed, so the only "Luminous" on screen would be the chapter text.
-- assertNotVisible: "Luminous"
+- assertNotVisible:
+    text: "Luminous"
+    height: 1000
+    tolerance: 999
 - tapOn:
     id: "reader-back"
 - extendedWaitUntil:
@@ -72,9 +81,15 @@ name: Leafellow Android reader acceptance
 # A resume note alone does not prove we reopened away from the saved passage. Require actual
 # rendered paragraph text first, so an empty/loading WebView cannot satisfy the absence check.
 - extendedWaitUntil:
-    visible: "Paragraph [0-9]+ of the acceptance chapter.*"
+    visible:
+      text: "Paragraph [0-9]+ of the acceptance chapter.*"
+      height: 1000
+      tolerance: 999
     timeout: 30000
-- assertNotVisible: "Luminous"
+- assertNotVisible:
+    text: "Luminous"
+    height: 1000
+    tolerance: 999
 - takeScreenshot: reader-resumed-away
 - tapOn:
     id: "highlights-toggle"
@@ -92,6 +107,8 @@ name: Leafellow Android reader acceptance
 # highlight row below the toggle and not just the app's bridge-success message.
 - assertVisible:
     text: "Luminous"
+    height: 1000
+    tolerance: 999
     above:
       id: "highlights-toggle"
 - takeScreenshot: reader-returned-to-passage

@@ -5,7 +5,8 @@
 // path cannot read (and, without ".epub" in it, core rejects outright). So on such platforms the
 // exact bytes already validated by inspectEpub are written to an app-owned cache file and the
 // renderer gets that file:// URI. The copy is temporary: it exists only while the book is open
-// and is removed on close; copies left behind by a crash are removed on the next start.
+// and cleanup is attempted on close and next startup. A crash or deletion error may leave it
+// in cache until a later cleanup; there is no secure-erasure or backup guarantee.
 
 /** Subdirectory of the app cache that only this module writes to. */
 export const RENDERER_SOURCE_DIRECTORY = 'leafellow-reader-source';
@@ -22,7 +23,7 @@ export function isOwnedRendererSourceName(name: string): boolean {
  */
 export function rendererCanLoadUri(uri: string): boolean {
   return uri.startsWith('file:///') && uri.length <= 1000 && !uri.includes('base64,')
-    && uri.endsWith('.epub') && !/[\\'"<>\u0000-\u001f\u2028\u2029]/.test(uri);
+    && uri.endsWith('.epub') && !/[\\'"<>$`\u0000-\u001f\u2028\u2029]/.test(uri);
 }
 
 /** Filesystem operations, scoped to the owned cache directory; names never contain separators. */

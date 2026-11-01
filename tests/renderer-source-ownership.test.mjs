@@ -17,7 +17,8 @@ test('a failed exclusive create cannot delete an already-existing cache file', a
 
 test('direct file URIs cannot inject into the engine single-quoted source literal', () => {
   for (const uri of ["file:///tmp/reader's-book.epub", 'file:///tmp/book\\name.epub',
-    'file:///tmp/book\nname.epub', 'file:///tmp/book</script>.epub']) {
+    'file:///tmp/book\nname.epub', 'file:///tmp/book</script>.epub',
+    'file:///tmp/book$&name.epub', 'file:///tmp/book$$name.epub', 'file:///tmp/book$`name.epub']) {
     assert.equal(rendererCanLoadUri(uri), false, uri);
   }
   assert.equal(rendererCanLoadUri('file:///tmp/reader%27s-book.epub'), true);

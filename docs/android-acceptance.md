@@ -1,6 +1,6 @@
 # Android reader acceptance
 
-**Status: provisional.** The workflow, flow and tooling are implemented and checked on the host. **No native acceptance pass yet:** the first runtime reached file import but stalled before rendering; the transport fix awaits a new hosted run. Nothing here counts as Android acceptance until a hosted CI run passes and its evidence artifact has been reviewed. iOS is separate and not covered: [`ios.yml`](../.github/workflows/ios.yml) is only a build and launch smoke test.
+**Status: provisional.** The workflow, flow and tooling are implemented and checked on the host. **No full native acceptance pass yet:** run 41313612875 verified rendering, real long-press selection, saving and scrolling after the transport fix; its next assertion hit a zero-height accessibility-node false positive. Resume, return-to, export and deletion still require the next hosted run. Nothing here counts as Android acceptance until a hosted CI run passes and its evidence artifact has been reviewed. iOS is separate and not covered: [`ios.yml`](../.github/workflows/ios.yml) is only a build and launch smoke test.
 
 ## What it exercises
 
@@ -21,13 +21,13 @@ No step is optional. Navigation inside the system file picker is conditional, be
 
 ## Renderer transport regression
 
-The first hosted run built and installed the Release APK and selected the fixture through DocumentsUI, but the reader stayed on Opening before text appeared. Android's picker returns a native `content://` URI; the installed EPUB engine passes its source to browser-side epub.js rather than reading it through Android's ContentResolver.
+The first hosted run built and installed the Release APK and selected the fixture through DocumentsUI, but the reader stayed on Opening before text appeared. A later hosted run (41313612875) verified the transport fix through actual rendering, long-press selection, save confirmation and scrolling. Android's picker returns a native `content://` URI; the installed EPUB engine passes its source to browser-side epub.js rather than reading it through Android's ContentResolver.
 
-The app now stages the exact already-validated bytes in its own app-cache namespace when a source cannot be safely handed directly to the engine. The renderer receives a short `file:///…​.epub` URI, not the SAF URI or a base64 book embedded in its persistent HTML. Raw quote/backslash/script-delimiter paths are staged too, because the installed engine interpolates its source into a JavaScript literal. Safe existing iOS file URIs retain their prior path.
+The app now stages the exact already-validated bytes in its own app-cache namespace when a source cannot be safely handed directly to the engine. The renderer receives a short `file:///cache/book-token.epub` URI, not the SAF URI or a base64 book embedded in its persistent HTML. Raw quote/backslash/script-delimiter paths are staged too, because the installed engine interpolates its source into a JavaScript literal. Safe existing iOS file URIs retain their prior path.
 
 Only the operation's own newly-created file may be removed after a partial write; a failed exclusive creation must not delete an existing file. Cleanup is attempted on close, import failure, unmount and next startup. A crash or deletion failure can leave a temporary copy in cache until a later cleanup; no backup/secure-erasure guarantee is made. This is not a retained book library, an upload, or permission to execute book scripts. `allowScriptedContent` remains false. A bounded opening timeout now shows a useful error rather than an unexplained endless spinner.
 
-Host regression tests cover this boundary and lifecycle. **A fresh hosted native run is still required to prove the fix**, and later selection/export steps remain unverified until that run completes.
+Host regression tests cover this boundary and lifecycle. The transport fix has native rendering/selection/save evidence; restart, return-to, export and delete remain unverified until the full flow completes.
 
 ## Fixture
 
@@ -60,5 +60,5 @@ Host regression tests cover this boundary and lifecycle. **A fresh hosted native
 - **Long press in the WebView** depends on Maestro locating "Luminous" through the WebView's accessibility tree. The paragraph contains only that word so the centre point lands on it. If the system selects more or less than the word, the quote assertion fails. It is not relaxed.
 - Android shows its own **selection toolbar** (Copy, Share…) because the reader sets no custom menu. It may overlap the top of the reader, but not the preview card.
 - **Layout**: with the highlight panel open, the export preview shares the screen with the reader. On a Pixel 6 the acknowledgement and confirm buttons should fit, but this has not been observed.
-- After the swipes, `assertNotVisible: "Luminous"` relies on Maestro treating off-screen WebView nodes as not visible.
+- Run 41313612875 showed paragraphs 7–10 in the failure screenshot, while the accessibility tree retained `Luminous` at zero-height bounds `[89,184][992,184]`. Visibility selectors now require height 1–1999 px using documented `height: 1000`, `tolerance: 999` semantics, verified against Maestro 2.12 `Filters.sizeMatches`. Initial, offscreen, resume-paragraph and return assertions all exclude zero-area nodes. The host policy tests are not native evidence; the corrected selectors must pass on the next real run.
 - The emulator binary version is whatever the hosted SDK or the runner action installs. It is recorded in the logs, not pinned.
