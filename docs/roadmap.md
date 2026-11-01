@@ -26,7 +26,9 @@ Import → read → highlight → context preview → explanation/bridge → pri
 
 **Initial prototype status:** React Native + Expo app code imports a selected local, bounded, DRM-free/reflowable EPUB and renders a selection-preview surface on Android/iOS. Alice's Adventures in Wonderland (Project Gutenberg EPUB3) is the chosen first source. One last-reading CFI, progress value and content hash are stored in app-local SQLite; the same EPUB must be selected again to resume, and source bytes are not retained. iOS/Android bundles type-check and export. The predecessor iOS build from `main` built and launched. The web route is an informational placeholder.
 
-**Saved highlights (implemented, not accepted):** users can save a selected passage as a private, local highlight, then list, mark, return to and delete it per exact source. See [saved highlights](saved-highlights.md). Real-SQLite adapter and logic tests pass. Native selection, mark rendering, navigation and SQLite behavior for highlights are not yet verified on a simulator or device. Export is the next slice. PDF, AI and full cross-platform acceptance remain unimplemented.
+**Saved highlights (implemented, not accepted):** users can save a selected passage as a private, local highlight, then list, mark, return to and delete it per exact source. See [saved highlights](saved-highlights.md). Real-SQLite adapter and logic tests pass. Native selection, mark rendering, navigation and SQLite behavior for highlights are not yet verified on a simulator or device. PDF, AI and full cross-platform acceptance remain unimplemented.
+
+**Highlight export (implemented, not accepted):** users can export the current book's private highlights as one versioned JSON file to a system folder they choose, after a count preview and an explicit privacy acknowledgement. See [highlight export](highlight-export.md). Serializer, real-SQLite snapshot and injected-destination tests pass. The native folder picker, `createFile` and write/read-back have not been verified on a simulator or device. There is no import, sharing, sync or upload.
 
 ## 3. Learning evidence and optional sharing
 

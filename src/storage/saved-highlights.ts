@@ -159,6 +159,57 @@ export async function listSavedHighlights(
   return { highlights, unreadable };
 }
 
+/** Thrown when an export snapshot meets a row it cannot validate; carries only the count. */
+export class HighlightExportUnreadableError extends Error {
+  readonly unreadable: number;
+  constructor(unreadable: number) {
+    super(`${unreadable} saved highlight(s) could not be read`);
+    this.name = 'HighlightExportUnreadableError';
+    this.unreadable = unreadable;
+  }
+}
+
+/** Every row of one source, each validated; any unreadable row fails the whole snapshot. */
+export async function readHighlightsForExport(db: HighlightDatabase, documentId: string): Promise<SavedHighlight[]> {
+  if (!isDocumentIdentity(documentId)) throw new TypeError('Invalid document identity');
+  const rows = await db.getAllAsync<Row>(
+    `${SELECT_COLUMNS} WHERE document_id = ? ORDER BY created_at ASC, id ASC LIMIT ?`,
+    documentId, MAX_HIGHLIGHTS_PER_SOURCE + 1,
+  );
+  if (rows.length > MAX_HIGHLIGHTS_PER_SOURCE) throw new RangeError('Too many highlights to export');
+  const highlights: SavedHighlight[] = [];
+  let unreadable = 0;
+  for (const row of rows) {
+    try {
+      highlights.push(readRow(row, documentId));
+    } catch {
+      unreadable += 1;
+    }
+  }
+  if (unreadable > 0) throw new HighlightExportUnreadableError(unreadable);
+  return highlights;
+}
+
+/** Re-checks an in-memory highlight against the same contract a stored row must meet. */
+export function validateSavedHighlight(value: unknown, documentId: string): SavedHighlight {
+  const candidate = value as SavedHighlight | null;
+  if (!candidate || typeof candidate !== 'object' || !candidate.annotation || typeof candidate.annotation !== 'object') {
+    throw new TypeError('Invalid stored highlight');
+  }
+  const anchor = candidate.annotation.anchor as { format?: unknown; cfi?: unknown } | undefined;
+  let record: string;
+  try {
+    record = serializeAnnotation(candidate.annotation);
+  } catch (error) {
+    if (error instanceof RangeError) throw error;
+    throw new TypeError('Invalid stored highlight');
+  }
+  return readRow({
+    id: candidate.id, document_id: candidate.annotation.documentId, cfi: anchor?.format === 'epub' ? anchor.cfi as string : '',
+    record, created_at: candidate.createdAt,
+  }, documentId);
+}
+
 /** Deletes only the named highlight within the named source. Resolves whether a row was removed. */
 export async function deleteSavedHighlight(db: HighlightDatabase, documentId: string, id: string): Promise<boolean> {
   if (!isDocumentIdentity(documentId)) throw new TypeError('Invalid document identity');
