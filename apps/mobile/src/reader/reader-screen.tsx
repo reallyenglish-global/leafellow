@@ -7,19 +7,11 @@ import { ActivityIndicator, Pressable, ScrollView, Text, View, type LayoutChange
 import { useSQLiteContext } from 'expo-sqlite';
 
 import { captureSelection, isSelectionCurrent, type PendingSelection } from '../../../../src/reader/highlight-selection';
-import {
-  createExportGuard,
-  exportFileName,
-  runHighlightExport,
-  serializeHighlightExport,
-  type ExportOutcome,
-} from '../../../../src/storage/highlight-export';
-import { createExportFlow, type ExportFlowResult, type ExportFlowState } from '../../../../src/storage/highlight-export-flow';
 import { createHighlightSession } from '../../../../src/storage/highlight-session';
-import { HighlightExportUnreadableError, type SavedHighlight } from '../../../../src/storage/saved-highlights';
+import type { SavedHighlight } from '../../../../src/storage/saved-highlights';
 import { createSerialWriter } from '../../../../src/storage/serial-writes';
-import { systemFolderDestination } from '../highlight-export-destination';
 import { MOSS, READER_THEME, styles } from './reader-theme';
+import { plural, useExportFlow } from './use-export-flow';
 import { useHighlights } from './use-highlights';
 import { usePassageJump } from './use-passage-jump';
 import { highlightCfi, useReaderMarks } from './use-reader-marks';
@@ -30,49 +22,6 @@ import { useReadingPosition } from './use-reading-position';
 export type OpenBook = { name: string; uri: string; id: string; resumeCfi: string | null; release: () => void };
 // The renderer reports no error when its WebView never loads the book, so stop waiting honestly.
 const READER_OPEN_TIMEOUT_MS = 30_000;
-const plural = (count: number) => `${count} highlight${count === 1 ? '' : 's'}`;
-
-function describeExport(outcome: ExportOutcome, count: number): { message: string; failed: boolean } {
-  switch (outcome.status) {
-    case 'written':
-      // The requested name is reported as requested: a storage provider may store it under another name.
-      return { failed: false, message: `Exported ${plural(count)} to the folder you chose and checked the file by reading it back. Leafellow asked for the name ${outcome.fileName}; some storage providers save it under a different name. Leafellow does not upload it; the storage provider for that folder may sync it.` };
-    case 'cancelled':
-      return { failed: false, message: 'Export cancelled. No file was created.' };
-    case 'not-completed':
-      return { failed: true, message: 'The folder could not be opened, so nothing was exported.' };
-    case 'failed':
-      if (outcome.stage === 'exists') return { failed: true, message: 'A file with the export name already exists there. Leafellow did not write to it or remove it, and nothing was exported.' };
-      if (outcome.stage === 'create') return { failed: true, message: 'The export file could not be created in that folder, so nothing was exported. Some storage providers can leave an empty file behind; Leafellow did not write to it or remove it.' };
-      if (outcome.cleanup === 'failed') {
-        return { failed: true, message: 'The export could not be written and checked, and the new file could not be removed. An incomplete export file may remain in that folder; do not rely on it.' };
-      }
-      return { failed: true, message: 'The export could not be written and checked, so the new file was removed. Nothing was exported.' };
-  }
-}
-
-function describeExportResult(result: ExportFlowResult): { message: string; failed: boolean } {
-  switch (result.kind) {
-    case 'empty':
-      return { failed: false, message: 'This book has no saved highlights yet, so there is nothing to export.' };
-    case 'prepare-failed':
-      return {
-        failed: true,
-        message: result.reason instanceof HighlightExportUnreadableError
-          ? `${plural(result.reason.unreadable)} could not be read, so no partial export was made. Nothing was written.`
-          : 'Saved highlights could not be prepared for export. Nothing was written.',
-      };
-    case 'outcome':
-      return describeExport(result.outcome, result.count);
-    case 'error':
-      return { failed: true, message: 'The export could not be completed. Do not rely on any file it may have created.' };
-  }
-}
-
-function exportId(): string {
-  return `${Date.now().toString(36)}${Math.floor(Math.random() * 0x100000000).toString(36)}`;
-}
-
 function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void }) {
   const db = useSQLiteContext();
   const [readerSize, setReaderSize] = useState({ width: 0, height: 0 });
@@ -96,9 +45,6 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
   useEffect(() => { readerRef.current = reader; });
   const [writer] = useState(createSerialWriter);
   const [session] = useState(() => createHighlightSession(db, book.id, writer));
-  // Held from snapshot through preview, folder picker and write; saves, deletes and close wait.
-  const [exportGuard] = useState(createExportGuard);
-  const [exportState, setExportState] = useState<ExportFlowState>({ status: 'idle' });
   const active = useRef(true);
   useEffect(() => {
     active.current = true;
@@ -107,20 +53,8 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
   const { highlights, listState, saving, deletingId, ...saved } = useHighlights(session, active);
   const passage = usePassageJump(reader, active);
   const { markError, reset: resetMarks } = useReaderMarks(readerRef, highlights, readyGeneration);
+  const exporter = useExportFlow({ session, book, active, writer });
   const { progress, positionError, onLocationChange: savePosition, close: closePosition } = useReadingPosition(db, writer, book, active);
-  // Handlers ask the flow, not exportState: two taps before a re-render must not act on stale state.
-  const [exportFlow] = useState(() => createExportFlow({
-    guard: exportGuard,
-    async prepare() {
-      // Queued behind every accepted save and delete, and no new ones start while the guard is held.
-      const snapshot = await session.exportSnapshot();
-      return { count: snapshot.length, text: serializeHighlightExport(book.id, snapshot) };
-    },
-    fileName: () => exportFileName(book.id, exportId()),
-    run: ({ text, fileName }) => runHighlightExport({ text, fileName, destination: systemFolderDestination }),
-    isActive: () => active.current,
-    onChange: state => { if (active.current) setExportState(state); },
-  }));
   const currentHref = useRef<string | null>(null);
 
   function clearMessages() {
@@ -164,7 +98,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
 
   function saveSelection() {
     const pending = selection;
-    if (!pending || saving || writer.isClosed() || exportGuard.isBusy() || listState.status !== 'ready') return;
+    if (!pending || saving || writer.isClosed() || exporter.guard.isBusy() || listState.status !== 'ready') return;
     if (!isSelectionCurrent(pending, { documentId: book.id, href: currentHref.current })) {
       setSelection(null);
       setSelectionNotice('The reader moved since this passage was selected. Select it again to save it.');
@@ -177,28 +111,19 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
   }
 
   function deleteHighlight(highlight: SavedHighlight) {
-    if (deletingId || writer.isClosed() || exportGuard.isBusy()) return;
+    if (deletingId || writer.isClosed() || exporter.guard.isBusy()) return;
     clearMessages();
     saved.remove(highlight);
   }
 
   function startExport() {
-    if (closing || writer.isClosed()) return;
-    if (!exportFlow.start()) return;
-    clearMessages();
+    if (closing) return;
+    if (exporter.start()) clearMessages();
   }
 
-  function cancelExport() {
-    exportFlow.cancel();
-  }
-
-  function confirmExport() {
-    void exportFlow.confirm();
-  }
-
-  const exportResult = exportState.status === 'finished' ? describeExportResult(exportState.result) : null;
-
-  const exportBusy = exportState.status === 'preparing' || exportState.status === 'preview' || exportState.status === 'writing';
+  const exportState = exporter.state;
+  const exportResult = exporter.result;
+  const exportBusy = exporter.busy;
   const canSave = !saving && !closing && !exportBusy && listState.status === 'ready';
   const canExport = !closing && !exportBusy && listState.status === 'ready' && highlights.length > 0;
 
@@ -206,7 +131,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
   const notice = pressNotice || passage.notice || saved.notice;
 
   async function closeReader() {
-    if (closing || exportGuard.isBusy()) return;
+    if (closing || exporter.guard.isBusy()) return;
     setClosing(true);
     setSelection(null);
     passage.cancel();
@@ -346,10 +271,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
                 accessibilityState={{ checked: exportState.acknowledged }}
                 accessibilityLabel="I understand the exported file leaves Leafellow’s private storage"
                 testID="export-acknowledge"
-                onPress={() => {
-                  const current = exportFlow.state();
-                  if (current.status === 'preview') exportFlow.setAcknowledged(!current.acknowledged);
-                }}
+                onPress={exporter.toggleAcknowledged}
                 style={styles.checkRow}
               >
                 <Text style={styles.checkBox}>{exportState.acknowledged ? '☑' : '☐'}</Text>
@@ -362,12 +284,12 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
                   accessibilityState={{ disabled: !exportState.acknowledged }}
                   disabled={!exportState.acknowledged}
                   testID="export-confirm"
-                  onPress={confirmExport}
+                  onPress={exporter.confirm}
                   style={({ pressed }) => [styles.saveButton, styles.exportButton, pressed && styles.pressed, !exportState.acknowledged && styles.disabled]}
                 >
                   <Text style={styles.saveButtonText}>Choose folder and export</Text>
                 </Pressable>
-                <Pressable accessibilityRole="button" accessibilityLabel="Cancel export" onPress={cancelExport} style={styles.rowButton}>
+                <Pressable accessibilityRole="button" accessibilityLabel="Cancel export" onPress={exporter.cancel} style={styles.rowButton}>
                   <Text style={styles.rowButtonText}>Cancel</Text>
                 </Pressable>
               </View>
