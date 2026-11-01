@@ -2,8 +2,10 @@
 // Exact-passage navigation for the native EPUB reader. The engine's goToLocation only dispatches
 // `rendition.display(...)`, so instead the app injects one script that displays the stored range,
 // re-reads its text with the same `book.getRange(cfi).toString()` call the engine used when the
-// passage was selected, and checks the range against `rendition.currentLocation()` with epub.js's
-// own `ePub.CFI.prototype.compare`. Only a reply carrying the current request token is accepted.
+// passage was selected, and waits for the engine's relocated report before checking visible bounds.
+// display/currentLocation can be fresh while rendition.location is still stale: resizing the reader
+// for the success message would then restore the old position. Only a reply carrying the current
+// request token is accepted.
 
 import { isEpubRangeCfi, MAX_HIGHLIGHT_QUOTE_LENGTH } from './highlight-selection.ts';
 
@@ -52,7 +54,9 @@ export function passageJumpFailure(code: PassageJumpFailure): PassageJumpOutcome
 // engine template (template.js: `let book; let rendition;` plus the epub.js bundle).
 const PAGE_FUNCTION = `function (req) {
   var bridge = window.ReactNativeWebView;
+  var stopWatching = function () {};
   function post(result) {
+    stopWatching();
     result.type = ${JSON.stringify(PASSAGE_JUMP_MESSAGE_TYPE)};
     result.token = req.token;
     if (bridge && typeof bridge.postMessage === 'function') bridge.postMessage(JSON.stringify(result));
@@ -76,24 +80,46 @@ const PAGE_FUNCTION = `function (req) {
       range: false,
       path: { steps: target.path.steps.concat(target.end.steps), terminal: target.end.terminal }
     };
+    if (typeof rendition.on !== 'function' || typeof rendition.off !== 'function') {
+      return fail('engine-unavailable');
+    }
+    // The engine updates its resize-restoration cache before emitting relocated, not when
+    // display resolves. Subscribe first: display of an already-visible target still reports it.
+    var reported = new Promise(function (resolve) {
+      var onRelocated = function (location) { resolve(location); };
+      var timer = setTimeout(function () { resolve(null); }, ${PASSAGE_JUMP_TIMEOUT_MS - 1000});
+      stopWatching = function () {
+        clearTimeout(timer);
+        rendition.off('relocated', onRelocated);
+      };
+      rendition.on('relocated', onRelocated);
+    });
     Promise.resolve(rendition.display(req.cfi)).then(function () {
       return book.getRange(req.cfi);
     }, function () {
       throw { leafellow: 'display-failed' };
     }).then(function (range) {
       if (!range || range.toString() !== req.exact) return fail('text-mismatch');
-      var rendered = rendition.getRange(req.cfi);
-      if (!rendered || rendered.toString() !== req.exact) return fail('not-rendered');
-      var location = rendition.currentLocation();
-      if (!location || !location.start || !location.end || !location.start.cfi || !location.end.cfi) {
-        return fail('not-visible');
-      }
-      var bounds = { visibleStart: location.start.cfi, visibleEnd: location.end.cfi };
-      var startVisible = compare(location.start.cfi, target) <= 0 && compare(target, location.end.cfi) <= 0;
-      if (!startVisible) return fail('not-visible', bounds);
-      bounds.status = 'confirmed';
-      bounds.fullyVisible = compare(location.start.cfi, targetEnd) <= 0 && compare(targetEnd, location.end.cfi) <= 0;
-      post(bounds);
+      return reported.then(function (reportedLocation) {
+        if (!reportedLocation || !reportedLocation.start || !reportedLocation.end ||
+            !reportedLocation.start.cfi || !reportedLocation.end.cfi ||
+            compare(reportedLocation.start.cfi, target) > 0 || compare(target, reportedLocation.end.cfi) > 0) {
+          return fail('not-visible', reportedLocation && reportedLocation.start && reportedLocation.end
+            ? { visibleStart: reportedLocation.start.cfi, visibleEnd: reportedLocation.end.cfi } : undefined);
+        }
+        var rendered = rendition.getRange(req.cfi);
+        if (!rendered || rendered.toString() !== req.exact) return fail('not-rendered');
+        var location = rendition.currentLocation();
+        if (!location || !location.start || !location.end || !location.start.cfi || !location.end.cfi) {
+          return fail('not-visible');
+        }
+        var bounds = { visibleStart: location.start.cfi, visibleEnd: location.end.cfi };
+        var startVisible = compare(location.start.cfi, target) <= 0 && compare(target, location.end.cfi) <= 0;
+        if (!startVisible) return fail('not-visible', bounds);
+        bounds.status = 'confirmed';
+        bounds.fullyVisible = compare(location.start.cfi, targetEnd) <= 0 && compare(targetEnd, location.end.cfi) <= 0;
+        post(bounds);
+      });
     }).catch(function (reason) {
       fail(reason && reason.leafellow === 'display-failed' ? 'display-failed' : 'error');
     });
