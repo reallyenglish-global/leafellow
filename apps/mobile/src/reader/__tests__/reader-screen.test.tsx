@@ -88,12 +88,15 @@ test('a running export blocks save, delete and close until it settles', async ()
   await fireEvent.press(screen.getByTestId('export-confirm'));
 
   expect(await screen.findByText('Exporting… do not close the app')).toBeTruthy();
+  await select();
+  expect(screen.getByTestId('save-highlight')).toBeDisabled();
   expect(screen.getByTestId('reader-back')).toBeDisabled();
   expect(screen.getByTestId('highlight-delete')).toBeDisabled();
 
   await act(async () => { folder.resolve(null); });
 
   expect(await screen.findByText('Export cancelled. No file was created.')).toBeTruthy();
+  expect(screen.getByTestId('save-highlight')).toBeEnabled();
   expect(screen.getByTestId('reader-back')).toBeEnabled();
 });
 

@@ -3,15 +3,17 @@ import { Reader, ReaderProvider, useReader } from '@epubjs-react-native/core';
 import { useFileSystem } from '@epubjs-react-native/expo-file-system';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ActivityIndicator, Pressable, ScrollView, Text, View, type LayoutChangeEvent } from 'react-native';
+import { ActivityIndicator, Pressable, Text, View, type LayoutChangeEvent } from 'react-native';
 import { useSQLiteContext } from 'expo-sqlite';
 
 import { captureSelection, isSelectionCurrent, type PendingSelection } from '../../../../src/reader/highlight-selection';
 import { createHighlightSession } from '../../../../src/storage/highlight-session';
-import type { SavedHighlight } from '../../../../src/storage/saved-highlights';
 import { createSerialWriter } from '../../../../src/storage/serial-writes';
+import { ExportCard } from './export-card';
+import { HighlightPanel } from './highlight-panel';
 import { MOSS, READER_THEME, styles } from './reader-theme';
-import { plural, useExportFlow } from './use-export-flow';
+import { SelectionCard } from './selection-card';
+import { useExportFlow } from './use-export-flow';
 import { useHighlights } from './use-highlights';
 import { usePassageJump } from './use-passage-jump';
 import { highlightCfi, useReaderMarks } from './use-reader-marks';
@@ -22,14 +24,13 @@ import { useReadingPosition } from './use-reading-position';
 export type OpenBook = { name: string; uri: string; id: string; resumeCfi: string | null; release: () => void };
 // The renderer reports no error when its WebView never loads the book, so stop waiting honestly.
 const READER_OPEN_TIMEOUT_MS = 30_000;
+
 function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void }) {
   const db = useSQLiteContext();
-  const [readerSize, setReaderSize] = useState({ width: 0, height: 0 });
-  const handleReaderLayout = useCallback(({ nativeEvent: { layout } }: LayoutChangeEvent) => {
-    const { width, height } = layout;
-    setReaderSize(current => current.width === width && current.height === height ? current : { width, height });
-  }, []);
   const insets = useSafeAreaInsets();
+  const [readerSize, setReaderSize] = useState({ width: 0, height: 0 });
+  const handleReaderLayout = useCallback(({ nativeEvent: { layout: { width, height } } }: LayoutChangeEvent) =>
+    setReaderSize(current => current.width === width && current.height === height ? current : { width, height }), []);
   const [selection, setSelection] = useState<PendingSelection | null>(null);
   const [selectionNotice, setSelectionNotice] = useState('');
   const [error, setError] = useState('');
@@ -39,38 +40,34 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
   const [closing, setClosing] = useState(false);
   // Bumped on every engine onReady, including WebView reloads, which drop all drawn marks.
   const [readyGeneration, setReadyGeneration] = useState(0);
-  const [openStalled, setOpenStalled] = useState(false);
+  const [openTimedOut, setOpenTimedOut] = useState(false);
   const reader = useReader();
   const readerRef = useRef(reader);
   useEffect(() => { readerRef.current = reader; });
   const [writer] = useState(createSerialWriter);
   const [session] = useState(() => createHighlightSession(db, book.id, writer));
   const active = useRef(true);
-  useEffect(() => {
-    active.current = true;
-    return () => { active.current = false; };
-  }, []);
+  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   const { highlights, listState, saving, deletingId, ...saved } = useHighlights(session, active);
   const passage = usePassageJump(reader, active);
   const { markError, reset: resetMarks } = useReaderMarks(readerRef, highlights, readyGeneration);
   const exporter = useExportFlow({ session, book, active, writer });
-  const { progress, positionError, onLocationChange: savePosition, close: closePosition } = useReadingPosition(db, writer, book, active);
+  const position = useReadingPosition(db, writer, book, active);
   const currentHref = useRef<string | null>(null);
 
-  function clearMessages() {
-    setPressNotice('');
-    saved.clearMessages();
-    passage.clearMessages();
-  }
-
+  // Arms only while the book has never been ready; the first onReady also hides a stall already shown.
   useEffect(() => {
-    if (readyGeneration > 0) {
-      setOpenStalled(false);
-      return;
-    }
-    const timer = setTimeout(() => setOpenStalled(true), READER_OPEN_TIMEOUT_MS);
+    if (readyGeneration > 0) return;
+    const timer = setTimeout(() => setOpenTimedOut(true), READER_OPEN_TIMEOUT_MS);
     return () => clearTimeout(timer);
   }, [readyGeneration]);
+  const openStalled = openTimedOut && readyGeneration === 0;
+
+  // Every action that used to clear the shared message line clears each source (go-to clears its own
+  // only when it acts, so the screen clears the rest after it).
+  function clearMessages() { setPressNotice(''); saved.clearMessages(); passage.clearMessages(); }
+  // One notice line, as before the split: a tapped mark, then a go-to result, then a save or delete.
+  const notice = pressNotice || passage.notice || saved.notice;
 
   function handleReady(location: { start?: { href?: string } } | undefined) {
     currentHref.current = location?.start?.href ?? null;
@@ -81,19 +78,22 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
 
   function handleSelected(text: string, cfiRange: string) {
     clearMessages();
-    const result = captureSelection(text, cfiRange, {
-      documentId: book.id,
-      // Only this book's own location report; never provider state that may predate it.
-      href: currentHref.current,
-      selectedAt: Date.now(),
-    });
-    if (result.ok) {
-      setSelection(result.selection);
-      setSelectionNotice('');
-    } else {
-      setSelection(null);
-      setSelectionNotice(result.reason);
+    // Only this book's own location report; never provider state that may predate it.
+    const result = captureSelection(text, cfiRange, { documentId: book.id, href: currentHref.current, selectedAt: Date.now() });
+    setSelection(result.ok ? result.selection : null);
+    setSelectionNotice(result.ok ? '' : result.reason);
+  }
+
+  function handleLocationChange(location: { start: { href: string; cfi: string } }, percent: number) {
+    const href = location.start.href;
+    if (href !== currentHref.current) {
+      currentHref.current = href;
+      if (selection && !isSelectionCurrent(selection, { documentId: book.id, href })) {
+        setSelection(null);
+        setSelectionNotice('The reader moved to another chapter, so the earlier selection was cleared.');
+      }
     }
+    position.onLocationChange(location, percent);
   }
 
   function saveSelection() {
@@ -110,251 +110,78 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
     });
   }
 
-  function deleteHighlight(highlight: SavedHighlight) {
-    if (deletingId || writer.isClosed() || exporter.guard.isBusy()) return;
-    clearMessages();
-    saved.remove(highlight);
-  }
-
-  function startExport() {
-    if (closing) return;
-    if (exporter.start()) clearMessages();
-  }
-
-  const exportState = exporter.state;
-  const exportResult = exporter.result;
-  const exportBusy = exporter.busy;
-  const canSave = !saving && !closing && !exportBusy && listState.status === 'ready';
-  const canExport = !closing && !exportBusy && listState.status === 'ready' && highlights.length > 0;
-
-  // One notice line, as before the split: a tapped mark, then a go-to result, then a save or delete.
-  const notice = pressNotice || passage.notice || saved.notice;
-
   async function closeReader() {
     if (closing || exporter.guard.isBusy()) return;
     setClosing(true);
     setSelection(null);
     passage.cancel();
-    await closePosition();
+    await position.close();
     active.current = false;
     onClose();
   }
 
+  const canSave = !saving && !closing && !exporter.busy && listState.status === 'ready';
+  const canExport = !closing && !exporter.busy && listState.status === 'ready' && highlights.length > 0;
+  const alertText = (message: string) => message ? <Text accessibilityRole="alert" style={styles.error}>{message}</Text> : null;
+
   return (
     <View style={[styles.readerScreen, { paddingBottom: insets.bottom }]}>
       <View testID="reader-header" style={[styles.readerHeader, { paddingTop: insets.top, paddingBottom: 12 }]}>
-        <Pressable
-          accessibilityRole="button"
+        <Pressable accessibilityRole="button" testID="reader-back" style={styles.backButton}
           accessibilityLabel={closing ? 'Finishing saves before returning to library'
-            : exportBusy ? 'Back to library, unavailable until the export finishes or is cancelled' : 'Back to library'}
-          accessibilityState={{ disabled: closing || exportBusy }}
-          disabled={closing || exportBusy}
-          testID="reader-back"
-          onPress={() => { void closeReader(); }}
-          style={styles.backButton}
-        >
+            : exporter.busy ? 'Back to library, unavailable until the export finishes or is cancelled' : 'Back to library'}
+          accessibilityState={{ disabled: closing || exporter.busy }} disabled={closing || exporter.busy}
+          onPress={() => { void closeReader(); }}>
           <Text style={styles.backText}>‹  Library</Text>
         </Pressable>
         <Text accessibilityRole="header" numberOfLines={1} style={styles.bookTitle}>{book.name}</Text>
-        <Text style={styles.progress}>{progress === null ? 'Opening…' : `${Math.round(progress)}%`}</Text>
+        <Text style={styles.progress}>{position.progress === null ? 'Opening…' : `${Math.round(position.progress)}%`}</Text>
       </View>
       {/* Measure the space left by the actual header, insets and panels. The engine's
           flex root needs a bounded parent; window-height estimates can clip its controls. */}
       <View testID="reader-frame" style={styles.readerFrame} onLayout={handleReaderLayout}>
         {readerSize.width > 0 && readerSize.height > 0 && <Reader
-          key={book.id}
-          src={book.uri}
-          fileSystem={useFileSystem}
-          width={readerSize.width}
-          height={readerSize.height}
-          initialLocation={book.resumeCfi ?? undefined}
-          flow="scrolled-doc"
-          spread="none"
-          enableSelection
-          allowScriptedContent={false}
-          allowPopups={false}
-          defaultTheme={READER_THEME}
-          onReady={(_total, location) => handleReady(location)}
-          onWebViewMessage={passage.onWebViewMessage}
-          onSelected={handleSelected}
-          onPressAnnotation={(annotation) => {
-            const pressed = highlights.find(item => highlightCfi(item) === annotation.cfiRange);
-            if (pressed) {
-              setShowHighlights(true);
-              setPressNotice(`Saved highlight: “${pressed.annotation.quote.exact.trim().slice(0, 80)}”`);
-            }
+          key={book.id} src={book.uri} fileSystem={useFileSystem} width={readerSize.width} height={readerSize.height}
+          initialLocation={book.resumeCfi ?? undefined} flow="scrolled-doc" spread="none" enableSelection
+          allowScriptedContent={false} allowPopups={false} defaultTheme={READER_THEME}
+          onReady={(_total, location) => handleReady(location)} onWebViewMessage={passage.onWebViewMessage} onSelected={handleSelected}
+          onPressAnnotation={({ cfiRange }) => {
+            const pressed = highlights.find(item => highlightCfi(item) === cfiRange);
+            if (pressed) { setShowHighlights(true); setPressNotice(`Saved highlight: “${pressed.annotation.quote.exact.trim().slice(0, 80)}”`); }
           }}
-          onLocationChange={(_total, location, nextProgressPercent) => {
-            const href = location.start.href;
-            if (href !== currentHref.current) {
-              currentHref.current = href;
-              if (selection && !isSelectionCurrent(selection, { documentId: book.id, href })) {
-                setSelection(null);
-                setSelectionNotice('The reader moved to another chapter, so the earlier selection was cleared.');
-              }
-            }
-            savePosition(location, nextProgressPercent);
-          }}
+          onLocationChange={(_total, location, percent) => handleLocationChange(location, percent)}
           onDisplayError={(reason) => setError(`This EPUB could not be displayed: ${reason}`)}
         />}
       </View>
       {book.resumeCfi ? <Text style={styles.resumeNote}>Resumed from this book’s last saved reading position.</Text> : null}
-      {selection ? (
-        <View style={styles.selectionCard}>
-          <Text style={styles.selectionLabel}>PASSAGE PREVIEW</Text>
-          <ScrollView style={styles.selectionScroll}>
-            <Text selectable testID="passage-preview-text" style={styles.selectionText}>{selection.exact}</Text>
-          </ScrollView>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Save this passage as a private highlight"
-            accessibilityState={{ disabled: !canSave, busy: saving }}
-            disabled={!canSave}
-            testID="save-highlight"
-            onPress={saveSelection}
-            style={({ pressed }) => [styles.saveButton, pressed && styles.pressed, !canSave && styles.disabled]}
-          >
-            <Text style={styles.saveButtonText}>
-              {saving ? 'Saving…' : listState.status === 'ready' ? 'Save highlight' : 'Waiting for saved highlights…'}
-            </Text>
-          </Pressable>
-          <Text style={styles.selectionHint}>Highlights are stored locally on this device; no automatic upload. AI explanations are not connected in this prototype.</Text>
-        </View>
-      ) : null}
+      {selection ? <SelectionCard selection={selection} canSave={canSave} saving={saving} listReady={listState.status === 'ready'} onSave={saveSelection} /> : null}
       {selectionNotice ? <Text accessibilityRole="alert" style={styles.notice}>{selectionNotice}</Text> : null}
       {notice ? <Text accessibilityLiveRegion="polite" style={styles.notice}>{notice}</Text> : null}
-      {saved.error ? <Text accessibilityRole="alert" style={styles.error}>{saved.error}</Text> : null}
-      {passage.error ? <Text accessibilityRole="alert" style={styles.error}>{passage.error}</Text> : null}
-      {markError ? <Text accessibilityRole="alert" style={styles.error}>{markError}</Text> : null}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ expanded: showHighlights }}
-        testID="highlights-toggle"
-        onPress={() => setShowHighlights(open => !open)}
-        style={styles.highlightToggle}
-      >
+      {alertText(saved.error)}{alertText(passage.error)}{alertText(markError)}
+      <Pressable accessibilityRole="button" accessibilityState={{ expanded: showHighlights }} testID="highlights-toggle"
+        onPress={() => setShowHighlights(open => !open)} style={styles.highlightToggle}>
         <Text style={styles.highlightToggleText}>
-          {listState.status === 'loading' ? 'Loading highlights…'
-            : listState.status === 'error' ? 'Highlights unavailable'
-              : `${showHighlights ? 'Hide' : 'Show'} highlights (${highlights.length})`}
+          {listState.status === 'loading' ? 'Loading highlights…' : listState.status === 'error' ? 'Highlights unavailable'
+            : `${showHighlights ? 'Hide' : 'Show'} highlights (${highlights.length})`}
         </Text>
       </Pressable>
       {showHighlights ? (
-        <View style={styles.highlightPanel}>
-          {listState.status === 'error' ? (
-            <View style={styles.highlightRow}>
-              <Text accessibilityRole="alert" style={styles.errorText}>Saved highlights could not be read from this device.</Text>
-              <Pressable accessibilityRole="button" onPress={() => { void saved.load(); }} style={styles.rowButton}>
-                <Text style={styles.rowButtonText}>Retry</Text>
-              </Pressable>
-            </View>
+        <HighlightPanel
+          listState={listState} highlights={highlights} exportState={exporter.state} exportResult={exporter.result}
+          canExport={canExport} jump={passage.jump} deletingId={deletingId} closing={closing} readyGeneration={readyGeneration}
+          onRetry={() => { void saved.load(); }} onStartExport={() => { if (!closing && exporter.start()) clearMessages(); }}
+          onGoTo={highlight => { if (passage.goTo(highlight)) { setPressNotice(''); saved.clearMessages(); } }}
+          onDelete={highlight => { if (!deletingId && !writer.isClosed() && !exporter.guard.isBusy()) { clearMessages(); saved.remove(highlight); } }}
+          exportCard={exporter.state.status === 'preview' ? (
+            <ExportCard count={exporter.state.count} acknowledged={exporter.state.acknowledged}
+              onToggle={exporter.toggleAcknowledged} onConfirm={exporter.confirm} onCancel={exporter.cancel} />
           ) : null}
-          {listState.status === 'ready' && listState.unreadable > 0 ? (
-            <Text accessibilityRole="alert" style={styles.errorText}>
-              {listState.unreadable} saved highlight{listState.unreadable === 1 ? '' : 's'} could not be read and {listState.unreadable === 1 ? 'is' : 'are'} not shown.
-            </Text>
-          ) : null}
-          {listState.status === 'ready' && highlights.length === 0 ? (
-            <Text style={styles.selectionHint}>No saved highlights for this book yet. Select a passage, then choose Save highlight. Export becomes available once a highlight is saved.</Text>
-          ) : null}
-          {exportState.status === 'preview' ? (
-            <View style={styles.exportCard}>
-              <Text accessibilityRole="header" style={styles.selectionLabel}>EXPORT THIS BOOK’S HIGHLIGHTS</Text>
-              <Text style={styles.exportText}>
-                {plural(exportState.count)} from this book only, as one JSON file. It contains the exact highlighted passages, any notes, their positions in this EPUB and the book’s content hash. It does not contain the book itself.
-              </Text>
-              <Text style={styles.exportText}>
-                Leafellow writes the file only to the folder you choose next and does not upload it. If that folder belongs to a cloud or synced storage provider, that provider may sync it.
-              </Text>
-              <Pressable
-                accessibilityRole="checkbox"
-                accessibilityState={{ checked: exportState.acknowledged }}
-                accessibilityLabel="I understand the exported file leaves Leafellow’s private storage"
-                testID="export-acknowledge"
-                onPress={exporter.toggleAcknowledged}
-                style={styles.checkRow}
-              >
-                <Text style={styles.checkBox}>{exportState.acknowledged ? '☑' : '☐'}</Text>
-                <Text style={styles.exportText}>I understand the file leaves Leafellow’s private storage.</Text>
-              </Pressable>
-              <View style={styles.exportActions}>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`Choose a folder and export ${plural(exportState.count)}`}
-                  accessibilityState={{ disabled: !exportState.acknowledged }}
-                  disabled={!exportState.acknowledged}
-                  testID="export-confirm"
-                  onPress={exporter.confirm}
-                  style={({ pressed }) => [styles.saveButton, styles.exportButton, pressed && styles.pressed, !exportState.acknowledged && styles.disabled]}
-                >
-                  <Text style={styles.saveButtonText}>Choose folder and export</Text>
-                </Pressable>
-                <Pressable accessibilityRole="button" accessibilityLabel="Cancel export" onPress={exporter.cancel} style={styles.rowButton}>
-                  <Text style={styles.rowButtonText}>Cancel</Text>
-                </Pressable>
-              </View>
-            </View>
-          ) : (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`Export this book’s ${plural(highlights.length)} to a folder you choose`}
-              accessibilityState={{ disabled: !canExport, busy: exportBusy }}
-              disabled={!canExport}
-              testID="export-start"
-              onPress={startExport}
-              style={[styles.rowButton, !canExport && styles.disabled]}
-            >
-              <Text style={styles.rowButtonText}>
-                {exportState.status === 'preparing' ? 'Preparing export…'
-                  : exportState.status === 'writing' ? 'Exporting… do not close the app'
-                    : highlights.length === 0 ? 'Export highlights (none saved yet)' : 'Export highlights…'}
-              </Text>
-            </Pressable>
-          )}
-          {exportResult ? (
-            <Text accessibilityRole={exportResult.failed ? 'alert' : undefined} accessibilityLiveRegion="polite"
-              style={exportResult.failed ? styles.errorText : styles.notice}>
-              {exportResult.message}
-            </Text>
-          ) : null}
-          <ScrollView style={styles.highlightScroll}>
-            {highlights.map(highlight => (
-              <View key={highlight.id} style={styles.highlightRow}>
-                <Text numberOfLines={2} style={styles.highlightQuote}>{highlight.annotation.quote.exact.trim()}</Text>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`Go to highlight: ${highlight.annotation.quote.exact.trim().slice(0, 60)}`}
-                  accessibilityState={{ disabled: passage.jump !== null || closing || readyGeneration === 0, busy: passage.jump?.id === highlight.id }}
-                  disabled={passage.jump !== null || closing || readyGeneration === 0}
-                  testID="highlight-go-to"
-                  onPress={() => { if (passage.goTo(highlight)) { setPressNotice(''); saved.clearMessages(); } }}
-                  style={styles.rowButton}
-                >
-                  <Text style={styles.rowButtonText}>{passage.jump?.id === highlight.id ? 'Checking…' : 'Go to'}</Text>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`Delete highlight: ${highlight.annotation.quote.exact.trim().slice(0, 60)}`}
-                  accessibilityState={{ disabled: deletingId !== null || closing || exportBusy, busy: deletingId === highlight.id }}
-                  disabled={deletingId !== null || closing || exportBusy}
-                  testID="highlight-delete"
-                  onPress={() => deleteHighlight(highlight)}
-                  style={styles.rowButton}
-                >
-                  <Text style={styles.deleteText}>{deletingId === highlight.id ? 'Deleting…' : 'Delete'}</Text>
-                </Pressable>
-              </View>
-            ))}
-          </ScrollView>
-        </View>
+        />
       ) : null}
-      {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
-      {openStalled && !error ? (
-        <Text accessibilityRole="alert" testID="reader-open-error" style={styles.error}>
-          This book did not finish opening. Go back to the library and choose it again.
-        </Text>
-      ) : null}
-      {positionError ? <Text accessibilityRole="alert" style={styles.error}>{positionError}</Text> : null}
+      {alertText(error)}
+      {openStalled && !error ? <Text accessibilityRole="alert" testID="reader-open-error" style={styles.error}>
+        This book did not finish opening. Go back to the library and choose it again.</Text> : null}
+      {alertText(position.positionError)}
       {reader.isLoading ? <ActivityIndicator accessibilityLabel="Loading book" style={styles.loading} color={MOSS} /> : null}
     </View>
   );
