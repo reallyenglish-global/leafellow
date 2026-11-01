@@ -21,6 +21,7 @@ import {
   runHighlightExport,
   serializeHighlightExport,
 } from '../src/storage/highlight-export.ts';
+import { createExportFlow } from '../src/storage/highlight-export-flow.ts';
 import { createHighlightSession } from '../src/storage/highlight-session.ts';
 import { createSerialWriter } from '../src/storage/serial-writes.ts';
 
@@ -229,6 +230,9 @@ test('the export guard is synchronous and stays held until the picker and write 
   assert.equal(guard.isBusy(), true);
   let releasePick;
   const destination = { pickFolder: () => new Promise(resolve => { releasePick = resolve; }) };
+  await assert.rejects(guard.hold(token, async () => 'early'), /not ready to run/, 'work cannot run before the preview');
+  assert.equal(guard.isBusy(), true);
+  assert.equal(guard.toPreview(token), true);
   const running = guard.hold(token, () => runHighlightExport({ text: '{}\n', fileName: name, destination }));
   await new Promise(resolve => setTimeout(resolve, 5));
   assert.equal(guard.isBusy(), true, 'held while the folder picker is open');
@@ -238,5 +242,188 @@ test('the export guard is synchronous and stays held until the picker and write 
   assert.ok(guard.tryAcquire());
   const stale = guard.tryAcquire();
   assert.equal(stale, null);
-  assert.throws(() => guard.release({}), /not the current export/);
+  assert.equal(guard.release({}), false, 'a foreign token cannot release the current export');
+  assert.equal(guard.isBusy(), true);
+});
+
+// B1: the guard is a synchronous state machine (idle -> preparing -> preview -> running -> idle).
+const deferred = () => {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+};
+
+test('guard: one token held twice in the same tick runs the work once', async () => {
+  const guard = createExportGuard();
+  const token = guard.tryAcquire();
+  guard.toPreview(token);
+  let runs = 0;
+  const gate = deferred();
+  const first = guard.hold(token, () => { runs += 1; return gate.promise; });
+  const second = guard.hold(token, () => { runs += 1; return Promise.resolve('again'); });
+  await assert.rejects(second, /not ready to run/);
+  assert.equal(runs, 1);
+  assert.equal(guard.isBusy(), true, 'the rejected second hold does not release the running export');
+  gate.resolve('done');
+  assert.equal(await first, 'done');
+  assert.equal(guard.isBusy(), false);
+});
+
+test('guard: release while running is refused, double release is harmless, stale tokens change nothing', async () => {
+  const guard = createExportGuard();
+  const token = guard.tryAcquire();
+  guard.toPreview(token);
+  const gate = deferred();
+  const running = guard.hold(token, () => gate.promise);
+  assert.equal(guard.release(token), false, 'cancel during running cannot release');
+  assert.equal(guard.isBusy(), true);
+  assert.equal(guard.tryAcquire(), null);
+  gate.resolve('ok');
+  await running;
+  assert.equal(guard.isBusy(), false);
+  assert.equal(guard.release(token), false, 'releasing a finished token is a harmless no-op');
+
+  const a = guard.tryAcquire();
+  assert.equal(guard.release(a), true);
+  assert.equal(guard.release(a), false, 'double cancel is harmless');
+  const b = guard.tryAcquire();
+  assert.equal(guard.release(a), false, 'an old token cannot release a newer export');
+  assert.equal(guard.toPreview(a), false);
+  await assert.rejects(guard.hold(a, async () => 'stale'), /not ready to run/);
+  assert.equal(guard.isBusy(), true, 'export b is still held');
+  assert.equal(guard.release(b), true);
+});
+
+function flowHarness({ count = 2 } = {}) {
+  const guard = createExportGuard();
+  const prepares = [];
+  const runs = [];
+  let active = true;
+  const flow = createExportFlow({
+    guard,
+    prepare: () => { const d = deferred(); prepares.push(d); return d.promise; },
+    fileName: () => name,
+    run: input => { const d = deferred(); runs.push({ input, ...d }); return d.promise; },
+    isActive: () => active,
+    onChange: () => {},
+  });
+  return { guard, flow, prepares, runs, count, unmount: () => { active = false; } };
+}
+
+async function openPreview(h, text = 'TEXT') {
+  const started = h.flow.start();
+  h.prepares.at(-1).resolve({ count: h.count, text });
+  await started;
+  assert.equal(h.flow.state().status, 'preview');
+  h.flow.setAcknowledged(true);
+}
+
+test('flow: confirm twice in the same tick opens one picker and reports the verified result', async () => {
+  const h = flowHarness();
+  await openPreview(h);
+  const first = h.flow.confirm();
+  const second = h.flow.confirm();
+  assert.equal(second, null, 'the second confirm is refused synchronously');
+  assert.equal(h.runs.length, 1, 'only one export run (one picker)');
+  assert.equal(h.flow.state().status, 'writing');
+  h.runs[0].resolve({ status: 'written', fileName: name });
+  await first;
+  assert.deepEqual(h.flow.state(), { status: 'finished', result: { kind: 'outcome', outcome: { status: 'written', fileName: name }, count: 2 } });
+  assert.equal(h.guard.isBusy(), false);
+});
+
+test('flow: confirm then cancel in the same tick keeps the export held and still reports written', async () => {
+  const h = flowHarness();
+  await openPreview(h);
+  const confirming = h.flow.confirm();
+  assert.equal(h.flow.cancel(), false, 'cancel during running is refused');
+  assert.equal(h.flow.isBusy(), true);
+  assert.equal(h.guard.isBusy(), true);
+  assert.equal(h.flow.start(), null, 'no second export while the picker is open');
+  h.runs[0].resolve({ status: 'written', fileName: name });
+  await confirming;
+  assert.equal(h.flow.state().result.outcome.status, 'written');
+  assert.equal(h.guard.isBusy(), false);
+});
+
+test('flow: double cancel is harmless and confirm after cancel does nothing', async () => {
+  const h = flowHarness();
+  await openPreview(h);
+  assert.equal(h.flow.cancel(), true);
+  assert.equal(h.flow.cancel(), false);
+  assert.equal(h.flow.confirm(), null);
+  assert.equal(h.runs.length, 0);
+  assert.equal(h.guard.isBusy(), false);
+  assert.deepEqual(h.flow.state(), { status: 'idle' });
+});
+
+test('flow: acknowledgement is read from flow state, not a render closure', async () => {
+  const h = flowHarness();
+  const started = h.flow.start();
+  h.prepares[0].resolve({ count: 1, text: 'T' });
+  await started;
+  assert.equal(h.flow.confirm(), null, 'unacknowledged');
+  h.flow.setAcknowledged(true);
+  const confirming = h.flow.confirm();
+  assert.ok(confirming, 'acknowledged in the same tick is honoured');
+  h.runs[0].resolve({ status: 'cancelled' });
+  await confirming;
+});
+
+test('flow: a stale prepare completion cannot release or overwrite a newer export', async () => {
+  const h = flowHarness();
+  const oldStart = h.flow.start();
+  assert.equal(h.flow.cancel(), true, 'cancel while preparing');
+  const newStart = h.flow.start();
+  assert.ok(newStart);
+  h.prepares[0].resolve({ count: 9, text: 'OLD' });
+  await oldStart;
+  assert.equal(h.flow.state().status, 'preparing', 'old completion did not move the new export');
+  assert.equal(h.guard.isBusy(), true, 'old completion did not release the new export');
+  h.prepares[1].resolve({ count: 2, text: 'NEW' });
+  await newStart;
+  assert.deepEqual(h.flow.state(), { status: 'preview', count: 2, acknowledged: false });
+  h.flow.setAcknowledged(true);
+  const confirming = h.flow.confirm();
+  assert.equal(h.runs[0].input.text, 'NEW');
+  h.runs[0].resolve({ status: 'written', fileName: name });
+  await confirming;
+});
+
+test('flow: a stale prepare failure cannot release a newer export', async () => {
+  const h = flowHarness();
+  const oldStart = h.flow.start();
+  h.flow.cancel();
+  h.flow.start();
+  h.prepares[0].reject(new Error('boom'));
+  await oldStart;
+  assert.equal(h.flow.state().status, 'preparing');
+  assert.equal(h.guard.isBusy(), true);
+});
+
+test('flow: a run that throws reports an error, releases only its own token, and a new export can start', async () => {
+  const h = flowHarness();
+  await openPreview(h);
+  const confirming = h.flow.confirm();
+  h.runs[0].reject(new Error('native'));
+  await confirming;
+  assert.deepEqual(h.flow.state(), { status: 'finished', result: { kind: 'error', fileName: name } });
+  assert.equal(h.guard.isBusy(), false);
+  assert.ok(h.flow.start(), 'a new export can start');
+});
+
+test('flow: empty snapshot and unmount during prepare release only their own token', async () => {
+  const empty = flowHarness({ count: 0 });
+  const s = empty.flow.start();
+  empty.prepares[0].resolve({ count: 0, text: 'E' });
+  await s;
+  assert.deepEqual(empty.flow.state(), { status: 'finished', result: { kind: 'empty' } });
+  assert.equal(empty.guard.isBusy(), false);
+  const gone = flowHarness();
+  const g = gone.flow.start();
+  gone.unmount();
+  gone.prepares[0].resolve({ count: 1, text: 'T' });
+  await g;
+  assert.equal(gone.guard.isBusy(), false);
 });

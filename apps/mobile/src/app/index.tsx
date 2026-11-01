@@ -27,8 +27,8 @@ import {
   runHighlightExport,
   serializeHighlightExport,
   type ExportOutcome,
-  type ExportToken,
 } from '../../../../src/storage/highlight-export';
+import { createExportFlow, type ExportFlowResult, type ExportFlowState } from '../../../../src/storage/highlight-export-flow';
 import { createHighlightSession } from '../../../../src/storage/highlight-session';
 import { clearLastReadingPosition, loadLastReadingPosition, saveLastReadingPosition } from '../../../../src/storage/reading-position';
 import { HighlightExportUnreadableError, HighlightOutcomeUnknownError, type SavedHighlight } from '../../../../src/storage/saved-highlights';
@@ -37,30 +37,42 @@ import { systemFolderDestination } from '../highlight-export-destination';
 
 type OpenBook = { name: string; uri: string; id: string; resumeCfi: string | null };
 type ListState = { status: 'loading' } | { status: 'error' } | { status: 'ready'; unreadable: number };
-type ExportState =
-  | { status: 'idle' }
-  | { status: 'preparing' }
-  | { status: 'preview'; count: number; text: string; token: ExportToken; acknowledged: boolean }
-  | { status: 'writing' }
-  | { status: 'finished'; message: string; failed: boolean };
-
 const plural = (count: number) => `${count} highlight${count === 1 ? '' : 's'}`;
 
-function describeExport(outcome: ExportOutcome, count: number, fileName: string): { message: string; failed: boolean } {
+function describeExport(outcome: ExportOutcome, count: number): { message: string; failed: boolean } {
   switch (outcome.status) {
     case 'written':
-      return { failed: false, message: `Exported ${plural(count)} to ${outcome.fileName} and checked the file. Leafellow does not upload it; the storage provider for that folder may sync it.` };
+      // The requested name is reported as requested: a storage provider may store it under another name.
+      return { failed: false, message: `Exported ${plural(count)} to the folder you chose and checked the file by reading it back. Leafellow asked for the name ${outcome.fileName}; some storage providers save it under a different name. Leafellow does not upload it; the storage provider for that folder may sync it.` };
     case 'cancelled':
       return { failed: false, message: 'Export cancelled. No file was created.' };
     case 'not-completed':
       return { failed: true, message: 'The folder could not be opened, so nothing was exported.' };
     case 'failed':
-      if (outcome.stage === 'exists') return { failed: true, message: 'A file with the export name already exists there. It was left untouched and nothing was exported.' };
-      if (outcome.stage === 'create') return { failed: true, message: 'The export file could not be created in that folder. Nothing was exported.' };
+      if (outcome.stage === 'exists') return { failed: true, message: 'A file with the export name already exists there. Leafellow did not write to it or remove it, and nothing was exported.' };
+      if (outcome.stage === 'create') return { failed: true, message: 'The export file could not be created in that folder, so nothing was exported. Some storage providers can leave an empty file behind; Leafellow did not write to it or remove it.' };
       if (outcome.cleanup === 'failed') {
-        return { failed: true, message: `The export could not be written and checked, and the new file could not be removed. An incomplete ${fileName} may remain in that folder; do not rely on it.` };
+        return { failed: true, message: 'The export could not be written and checked, and the new file could not be removed. An incomplete export file may remain in that folder; do not rely on it.' };
       }
       return { failed: true, message: 'The export could not be written and checked, so the new file was removed. Nothing was exported.' };
+  }
+}
+
+function describeExportResult(result: ExportFlowResult): { message: string; failed: boolean } {
+  switch (result.kind) {
+    case 'empty':
+      return { failed: false, message: 'This book has no saved highlights yet, so there is nothing to export.' };
+    case 'prepare-failed':
+      return {
+        failed: true,
+        message: result.reason instanceof HighlightExportUnreadableError
+          ? `${plural(result.reason.unreadable)} could not be read, so no partial export was made. Nothing was written.`
+          : 'Saved highlights could not be prepared for export. Nothing was written.',
+      };
+    case 'outcome':
+      return describeExport(result.outcome, result.count);
+    case 'error':
+      return { failed: true, message: 'The export could not be completed. Do not rely on any file it may have created.' };
   }
 }
 
@@ -106,8 +118,21 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
   const [session] = useState(() => createHighlightSession(db, book.id, writer));
   // Held from snapshot through preview, folder picker and write; saves, deletes and close wait.
   const [exportGuard] = useState(createExportGuard);
-  const [exportState, setExportState] = useState<ExportState>({ status: 'idle' });
+  const [exportState, setExportState] = useState<ExportFlowState>({ status: 'idle' });
   const active = useRef(true);
+  // Handlers ask the flow, not exportState: two taps before a re-render must not act on stale state.
+  const [exportFlow] = useState(() => createExportFlow({
+    guard: exportGuard,
+    async prepare() {
+      // Queued behind every accepted save and delete, and no new ones start while the guard is held.
+      const snapshot = await session.exportSnapshot();
+      return { count: snapshot.length, text: serializeHighlightExport(book.id, snapshot) };
+    },
+    fileName: () => exportFileName(book.id, exportId()),
+    run: ({ text, fileName }) => runHighlightExport({ text, fileName, destination: systemFolderDestination }),
+    isActive: () => active.current,
+    onChange: state => { if (active.current) setExportState(state); },
+  }));
   const currentHref = useRef<string | null>(null);
   const applied = useRef(new Set<string>());
   const pendingJump = useRef<PassageJumpRequest | null>(null);
@@ -295,61 +320,22 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
       .finally(() => { if (active.current) setDeletingId(null); });
   }
 
-  async function startExport() {
+  function startExport() {
     if (closing || writer.isClosed()) return;
-    const token = exportGuard.tryAcquire();
-    if (!token) return;
-    setExportState({ status: 'preparing' });
+    if (!exportFlow.start()) return;
     setHighlightMessage('');
     setHighlightError('');
-    try {
-      // Queued behind every accepted save and delete, and no new ones start while the guard is held.
-      const snapshot = await session.exportSnapshot();
-      const text = serializeHighlightExport(book.id, snapshot);
-      if (!active.current || snapshot.length === 0) {
-        exportGuard.release(token);
-        if (active.current) {
-          setExportState({ status: 'finished', failed: false, message: 'This book has no saved highlights yet, so there is nothing to export.' });
-        }
-        return;
-      }
-      setExportState({ status: 'preview', count: snapshot.length, text, token, acknowledged: false });
-    } catch (reason) {
-      exportGuard.release(token);
-      if (!active.current) return;
-      setExportState({
-        status: 'finished',
-        failed: true,
-        message: reason instanceof HighlightExportUnreadableError
-          ? `${plural(reason.unreadable)} could not be read, so no partial export was made. Nothing was written.`
-          : 'Saved highlights could not be prepared for export. Nothing was written.',
-      });
-    }
   }
 
   function cancelExport() {
-    if (exportState.status !== 'preview') return;
-    exportGuard.release(exportState.token);
-    setExportState({ status: 'idle' });
+    exportFlow.cancel();
   }
 
-  async function confirmExport() {
-    if (exportState.status !== 'preview' || !exportState.acknowledged) return;
-    const { token, text, count } = exportState;
-    setExportState({ status: 'writing' });
-    let fileName = 'export file';
-    let result: { message: string; failed: boolean };
-    try {
-      fileName = exportFileName(book.id, exportId());
-      const name = fileName;
-      const outcome = await exportGuard.hold(token, () => runHighlightExport({ text, fileName: name, destination: systemFolderDestination }));
-      result = describeExport(outcome, count, fileName);
-    } catch {
-      if (exportGuard.isBusy()) exportGuard.release(token);
-      result = { failed: true, message: 'The export could not be completed. Do not rely on any file it may have created.' };
-    }
-    if (active.current) setExportState({ status: 'finished', ...result });
+  function confirmExport() {
+    void exportFlow.confirm();
   }
+
+  const exportResult = exportState.status === 'finished' ? describeExportResult(exportState.result) : null;
 
   const exportBusy = exportState.status === 'preparing' || exportState.status === 'preview' || exportState.status === 'writing';
   const canSave = !saving && !closing && !exportBusy && listState.status === 'ready';
@@ -494,7 +480,10 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
                 accessibilityRole="checkbox"
                 accessibilityState={{ checked: exportState.acknowledged }}
                 accessibilityLabel="I understand the exported file leaves Leafellow’s private storage"
-                onPress={() => setExportState(state => (state.status === 'preview' ? { ...state, acknowledged: !state.acknowledged } : state))}
+                onPress={() => {
+                  const current = exportFlow.state();
+                  if (current.status === 'preview') exportFlow.setAcknowledged(!current.acknowledged);
+                }}
                 style={styles.checkRow}
               >
                 <Text style={styles.checkBox}>{exportState.acknowledged ? '☑' : '☐'}</Text>
@@ -506,7 +495,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
                   accessibilityLabel={`Choose a folder and export ${plural(exportState.count)}`}
                   accessibilityState={{ disabled: !exportState.acknowledged }}
                   disabled={!exportState.acknowledged}
-                  onPress={() => { void confirmExport(); }}
+                  onPress={confirmExport}
                   style={({ pressed }) => [styles.saveButton, styles.exportButton, pressed && styles.pressed, !exportState.acknowledged && styles.disabled]}
                 >
                   <Text style={styles.saveButtonText}>Choose folder and export</Text>
@@ -522,7 +511,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
               accessibilityLabel={`Export this book’s ${plural(highlights.length)} to a folder you choose`}
               accessibilityState={{ disabled: !canExport, busy: exportBusy }}
               disabled={!canExport}
-              onPress={() => { void startExport(); }}
+              onPress={startExport}
               style={[styles.rowButton, !canExport && styles.disabled]}
             >
               <Text style={styles.rowButtonText}>
@@ -532,10 +521,10 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
               </Text>
             </Pressable>
           )}
-          {exportState.status === 'finished' ? (
-            <Text accessibilityRole={exportState.failed ? 'alert' : undefined} accessibilityLiveRegion="polite"
-              style={exportState.failed ? styles.errorText : styles.notice}>
-              {exportState.message}
+          {exportResult ? (
+            <Text accessibilityRole={exportResult.failed ? 'alert' : undefined} accessibilityLiveRegion="polite"
+              style={exportResult.failed ? styles.errorText : styles.notice}>
+              {exportResult.message}
             </Text>
           ) : null}
           <ScrollView style={styles.highlightScroll}>

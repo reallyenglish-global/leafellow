@@ -140,37 +140,70 @@ export async function runHighlightExport(
 }
 
 export type ExportToken = { readonly id: number };
+/** Phase of the current token. `idle` means no export holds the guard. */
+export type ExportPhase = 'idle' | 'preparing' | 'preview' | 'running';
 export type ExportGuard = {
-  /** Synchronous: returns null if an export is already in progress. */
+  /** Synchronous idle -> preparing. Returns null if an export is already in progress. */
   tryAcquire(): ExportToken | null;
-  release(token: ExportToken): void;
-  /** Runs work under an acquired token and releases it once the work settles. */
+  /** Synchronous preparing -> preview, only for the current token. */
+  toPreview(token: ExportToken): boolean;
+  /**
+   * Synchronous preparing|preview -> idle, only for the current token. Refused (false) while that
+   * token is running and for any stale or repeated token, so a second cancel is harmless.
+   */
+  release(token: ExportToken): boolean;
+  /**
+   * Synchronous preview -> running, then runs work once and returns to idle when it settles. A token
+   * that is not the current one in `preview` (already running, released, stale) rejects without
+   * calling work and without touching the current export.
+   */
   hold<T>(token: ExportToken, work: () => Promise<T>): Promise<T>;
+  phase(token: ExportToken): ExportPhase;
   isBusy(): boolean;
 };
 
 export function createExportGuard(): ExportGuard {
   let current: ExportToken | null = null;
+  let phase: ExportPhase = 'idle';
   let next = 0;
-  const release = (token: ExportToken) => {
-    if (current === null || token !== current) throw new Error('Token is not the current export');
-    current = null;
-  };
+  const own = (token: ExportToken) => current !== null && token === current;
   return {
     tryAcquire() {
       if (current) return null;
       current = { id: ++next };
+      phase = 'preparing';
       return current;
     },
-    release,
-    async hold(token, work) {
-      if (token !== current) throw new Error('Token is not the current export');
-      try {
-        return await work();
-      } finally {
-        release(token);
-      }
+    toPreview(token) {
+      if (!own(token) || phase !== 'preparing') return false;
+      phase = 'preview';
+      return true;
     },
+    release(token) {
+      if (!own(token) || phase === 'running') return false;
+      current = null;
+      phase = 'idle';
+      return true;
+    },
+    hold<T>(token: ExportToken, work: () => Promise<T>): Promise<T> {
+      // Not `async`: the transition must happen before any caller code runs again.
+      if (!own(token) || phase !== 'preview') return Promise.reject(new Error('Export is not ready to run'));
+      phase = 'running';
+      const settle = () => {
+        if (own(token)) {
+          current = null;
+          phase = 'idle';
+        }
+      };
+      let running: Promise<T>;
+      try {
+        running = Promise.resolve(work());
+      } catch (error) {
+        running = Promise.reject(error);
+      }
+      return running.finally(settle);
+    },
+    phase: token => (own(token) ? phase : 'idle'),
     isBusy: () => current !== null,
   };
 }
