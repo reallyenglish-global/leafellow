@@ -736,7 +736,7 @@ const styles = StyleSheet.create({
   backText: { color: '#F7F3E8', fontSize: 15, fontWeight: '600' },
   bookTitle: { flex: 1, color: '#F7F3E8', fontSize: 15, fontWeight: '600' },
   progress: { minWidth: 44, color: '#C5D8C1', fontSize: 12, textAlign: 'right' },
-  readerFrame: { flex: 1, overflow: 'hidden' },
+  readerFrame: { overflow: 'hidden' },
   resumeNote: { color: '#356B52', fontSize: 12, textAlign: 'center', paddingVertical: 8 },
   selectionCard: { maxHeight: 200, margin: 12, padding: 16, borderRadius: 16, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E1E8DE' },
   selectionLabel: { color: '#356B52', fontSize: 10, fontWeight: '700', letterSpacing: 1.2, marginBottom: 8 },
