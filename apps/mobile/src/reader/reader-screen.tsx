@@ -29,8 +29,9 @@ import { createHighlightSession } from '../../../../src/storage/highlight-sessio
 import { HighlightExportUnreadableError, type SavedHighlight } from '../../../../src/storage/saved-highlights';
 import { createSerialWriter } from '../../../../src/storage/serial-writes';
 import { systemFolderDestination } from '../highlight-export-destination';
-import { HIGHLIGHT_STYLE, MOSS, READER_THEME, styles } from './reader-theme';
+import { MOSS, READER_THEME, styles } from './reader-theme';
 import { useHighlights } from './use-highlights';
+import { highlightCfi, useReaderMarks } from './use-reader-marks';
 import { useReadingPosition } from './use-reading-position';
 
 // uri is what the renderer loads: the picked file itself, or an app-owned temporary cache copy of
@@ -81,10 +82,6 @@ function exportId(): string {
   return `${Date.now().toString(36)}${Math.floor(Math.random() * 0x100000000).toString(36)}`;
 }
 
-function highlightCfi(highlight: SavedHighlight): string {
-  return highlight.annotation.anchor.format === 'epub' ? highlight.annotation.anchor.cfi : '';
-}
-
 function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void }) {
   const db = useSQLiteContext();
   const [readerSize, setReaderSize] = useState({ width: 0, height: 0 });
@@ -103,10 +100,10 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
   const [closing, setClosing] = useState(false);
   // Bumped on every engine onReady, including WebView reloads, which drop all drawn marks.
   const [readyGeneration, setReadyGeneration] = useState(0);
-  const [markError, setMarkError] = useState('');
   const [openStalled, setOpenStalled] = useState(false);
   const reader = useReader();
   const readerRef = useRef(reader);
+  useEffect(() => { readerRef.current = reader; });
   const [writer] = useState(createSerialWriter);
   const [session] = useState(() => createHighlightSession(db, book.id, writer));
   // Held from snapshot through preview, folder picker and write; saves, deletes and close wait.
@@ -118,6 +115,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
     return () => { active.current = false; };
   }, []);
   const { highlights, listState, saving, deletingId, ...saved } = useHighlights(session, active);
+  const { markError, reset: resetMarks } = useReaderMarks(readerRef, highlights, readyGeneration);
   const { progress, positionError, onLocationChange: savePosition, close: closePosition } = useReadingPosition(db, writer, book, active);
   // Handlers ask the flow, not exportState: two taps before a re-render must not act on stale state.
   const [exportFlow] = useState(() => createExportFlow({
@@ -133,7 +131,6 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
     onChange: state => { if (active.current) setExportState(state); },
   }));
   const currentHref = useRef<string | null>(null);
-  const applied = useRef(new Set<string>());
   const pendingJump = useRef<PassageJumpRequest | null>(null);
 
   function clearMessages() {
@@ -141,8 +138,6 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
     setHighlightError('');
     saved.clearMessages();
   }
-
-  useEffect(() => { readerRef.current = reader; });
 
   useEffect(() => {
     if (readyGeneration > 0) {
@@ -152,34 +147,6 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
     const timer = setTimeout(() => setOpenStalled(true), READER_OPEN_TIMEOUT_MS);
     return () => clearTimeout(timer);
   }, [readyGeneration]);
-
-  // Reconcile drawn marks with the stored list for the current WebView instance only.
-  useEffect(() => {
-    if (readyGeneration === 0) return;
-    const wanted = new Map(highlights.map(highlight => [highlightCfi(highlight), highlight] as const));
-    let failed = 0;
-    for (const cfi of [...applied.current]) {
-      if (wanted.has(cfi)) continue;
-      try {
-        readerRef.current.removeAnnotationByCfi(cfi);
-        applied.current.delete(cfi);
-      } catch {
-        failed += 1;
-      }
-    }
-    for (const [cfi, highlight] of wanted) {
-      if (!cfi || applied.current.has(cfi)) continue;
-      try {
-        readerRef.current.addAnnotation('highlight', cfi, { id: highlight.id }, HIGHLIGHT_STYLE);
-        applied.current.add(cfi);
-      } catch {
-        failed += 1;
-      }
-    }
-    setMarkError(failed > 0
-      ? 'Some highlight marks could not be updated on the page. Your saved highlights are unchanged.'
-      : '');
-  }, [readyGeneration, highlights]);
 
   const finishJump = useCallback((outcome: PassageJumpOutcome) => {
     pendingJump.current = null;
@@ -203,7 +170,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
 
   function handleReady(location: { start?: { href?: string } } | undefined) {
     currentHref.current = location?.start?.href ?? null;
-    applied.current = new Set();
+    resetMarks();
     if (pendingJump.current) finishJump(passageJumpFailure('reloaded'));
     setReadyGeneration(generation => generation + 1);
   }
