@@ -81,8 +81,9 @@ if [[ "$FINAL" -ne 0 ]]; then finish; fi
 
 # Never install, clear application state or touch shared storage on a physical device.
 # adb itself refuses multiple targets; a single attached target must explicitly identify as qemu.
-QEMU="$(adb_t shell getprop ro.kernel.qemu 2>/dev/null | tr -d '\r')"
-if [[ "$QEMU" != "1" ]]; then
+BOOT_QEMU="$(adb_t shell getprop ro.boot.qemu 2>/dev/null | tr -d '\r')"
+LEGACY_QEMU="$(adb_t shell getprop ro.kernel.qemu 2>/dev/null | tr -d '\r')"
+if [[ "$BOOT_QEMU" != "1" && "$LEGACY_QEMU" != "1" ]]; then
   echo "Refusing acceptance on a target that is not an Android emulator" >&2
   record emulator-only 3
   echo "final=$FINAL" >> "$STATUS_FILE"
@@ -103,10 +104,11 @@ if [[ "$FINAL" -ne 0 ]]; then finish; fi
 
 DEVICE_NAME="$(adb_t shell settings get global device_name 2>/dev/null | tr -d '\r')"
 DEVICE_MODEL="$(adb_t shell getprop ro.product.model 2>/dev/null | tr -d '\r')"
-STORAGE_ROOT="Internal storage"
-for name in "$DEVICE_NAME" "$DEVICE_MODEL"; do
-  if [[ -n "$name" && "$name" != "null" ]]; then STORAGE_ROOT="$STORAGE_ROOT|$name"; fi
-done
+# Storage titles are literal labels, not caller-provided regex fragments.
+STORAGE_ROOT="$(python3 -c 'import re,sys; print("|".join(re.escape(x) for x in sys.argv[1:] if x and x != "null"))' \
+  "Internal storage" "$DEVICE_NAME" "$DEVICE_MODEL")"
+record storage-title $?
+if [[ "$FINAL" -ne 0 ]]; then finish; fi
 
 timeout "$MAESTRO_TIMEOUT" maestro test \
   --format junit --output "$OUT/junit.xml" \

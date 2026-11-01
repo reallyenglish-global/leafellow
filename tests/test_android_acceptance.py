@@ -117,6 +117,7 @@ class ExportCheckTests(unittest.TestCase):
             valid_export('c' * 64),
             valid_export(self.sha, quote='Luminous '),
             valid_export(self.sha, visibility='shared'),
+            valid_export(self.sha, anchor={'format': 'epub', 'href': 'wrong-chapter.xhtml', 'cfi': CFI}),
             valid_export(self.sha, anchor={'format': 'epub', 'href': 'chapter.xhtml', 'cfi': 'epubcfi(/6/2!/4/4/1:0)'}),
             valid_export(self.sha).replace('"count": 1', '"count": 2'),
             valid_export(self.sha).rstrip('\n'),
@@ -149,8 +150,13 @@ case "$1" in
     echo "<hierarchy/>" > "$3" ;;
   shell)
     case "$2" in
-      settings) echo "Pixel 6" ;;
-      getprop) if [[ "$3" == "ro.kernel.qemu" ]]; then echo "${FAKE_QEMU:-1}"; else echo "sdk_gphone64_x86_64"; fi ;;
+      settings) echo "${FAKE_DEVICE_NAME:-Pixel 6}" ;;
+      getprop)
+        case "$3" in
+          ro.kernel.qemu) echo "${FAKE_QEMU-1}" ;;
+          ro.boot.qemu) echo "${FAKE_BOOT_QEMU:-0}" ;;
+          *) echo "sdk_gphone64_x86_64" ;;
+        esac ;;
     esac ;;
 esac
 exit 0
@@ -205,7 +211,7 @@ class WrapperTests(unittest.TestCase):
         self.assertEqual(len(maestro), 1)
         for flag in ('--format junit', f'--output {self.out}/junit.xml', f'--test-output-dir {self.out}/maestro',
                      f'--debug-output {self.out}/maestro-debug', '-e APP_ID=com.anonymous.leafellow',
-                     '-e STORAGE_ROOT=Internal storage|Pixel 6|sdk_gphone64_x86_64'):
+                     r'-e STORAGE_ROOT=Internal\ storage|Pixel\ 6|sdk_gphone64_x86_64'):
             self.assertIn(flag, maestro[0])
         self.assertIn('adb push', '\n'.join(self.calls()))
         self.assertTrue(any('MEDIA_SCANNER_SCAN_FILE' in c for c in self.calls()))
@@ -213,6 +219,18 @@ class WrapperTests(unittest.TestCase):
         self.assertIn('"exportCheck": "passed"', (self.out / 'export-check.json').read_text())
         self.assertTrue((self.out / 'diagnostics' / 'logcat.txt').exists())
         self.assertTrue((self.out / 'diagnostics' / 'window.xml').exists())
+
+    def test_storage_root_regex_escapes_device_title_metacharacters(self):
+        result = self.run_wrapper(FAKE_DEVICE_NAME='Tablet (A)+.')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        call = next(c for c in self.calls() if c.startswith('maestro '))
+        self.assertIn(r'Tablet\ \(A\)\+\.', call)
+
+    def test_accepts_modern_emulator_boot_property_without_legacy_property(self):
+        result = self.run_wrapper(FAKE_QEMU='', FAKE_BOOT_QEMU='1')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.status()['emulator-only'], '0')
+        self.assertTrue(any(c.startswith('adb install') for c in self.calls()))
 
     def test_refuses_physical_device_before_install_or_storage_writes(self):
         result = self.run_wrapper(FAKE_QEMU='0')

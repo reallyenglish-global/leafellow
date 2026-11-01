@@ -57,8 +57,8 @@ def check_export(export_dir: Path, fixture: dict) -> dict:
     require(annotation['quote'].get('exact') == fixture['targetQuote'],
             f"quote {annotation['quote'].get('exact')!r} != {fixture['targetQuote']!r}")
     anchor = annotation['anchor']
-    require(anchor.get('format') == 'epub' and isinstance(anchor.get('href'), str) and anchor['href'],
-            'anchor is not an EPUB anchor')
+    require(anchor.get('format') == 'epub' and anchor.get('href') in ('chapter.xhtml', 'OEBPS/chapter.xhtml'),
+            'anchor is not the generated fixture chapter')
     require(isinstance(anchor.get('cfi'), str) and RANGE_CFI.fullmatch(anchor['cfi']), 'anchor CFI is not a range CFI')
     return {'file': path.name, 'id': entry['id'], 'cfi': anchor['cfi'], 'quote': annotation['quote']['exact']}
 

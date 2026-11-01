@@ -29,6 +29,7 @@ name: Leafellow Android reader acceptance
     text: "Luminous"
 - tapOn:
     id: "save-highlight"
+    enabled: true
 - extendedWaitUntil:
     visible: "Highlight saved on this device\\."
     timeout: 20000
@@ -68,6 +69,8 @@ name: Leafellow Android reader acceptance
 - runFlow: pick-fixture.yaml
 - assertVisible: "Resumed from this book’s last saved reading position\\."
 - assertVisible: "Show highlights \\(1\\)"
+# A resume note alone does not prove we reopened away from the saved passage.
+- assertNotVisible: "Luminous"
 - tapOn:
     id: "highlights-toggle"
 - assertVisible: "Hide highlights \\(1\\)"
@@ -76,9 +79,16 @@ name: Leafellow Android reader acceptance
 #    the drawn range text against the saved quote.
 - tapOn:
     id: "highlight-go-to"
+    enabled: true
 - extendedWaitUntil:
     visible: "Showing this highlight\\.|Showing the start of this highlight; it continues below\\."
     timeout: 20000
+# Independent accessibility evidence from the rendered reader, not the identical quote in the
+# highlight row below the toggle and not just the app's bridge-success message.
+- assertVisible:
+    text: "Luminous"
+    above:
+      id: "highlights-toggle"
 
 # 6. Privacy preview and acknowledgement, then the real system folder picker.
 - tapOn:
@@ -92,6 +102,7 @@ name: Leafellow Android reader acceptance
     id: "export-acknowledge"
 - tapOn:
     id: "export-confirm"
+    enabled: true
 - runFlow: pick-export-folder.yaml
 - extendedWaitUntil:
     visible: "Exported 1 highlight to the folder you chose.*"
@@ -100,6 +111,7 @@ name: Leafellow Android reader acceptance
 # 7. Delete through the UI, restart, re-import: the list is empty.
 - tapOn:
     id: "highlight-delete"
+    enabled: true
 - extendedWaitUntil:
     visible: "Highlight deleted\\."
     timeout: 20000
