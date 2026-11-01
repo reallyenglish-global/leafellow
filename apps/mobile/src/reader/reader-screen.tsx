@@ -126,7 +126,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
   const alertText = (message: string) => message ? <Text accessibilityRole="alert" style={styles.error}>{message}</Text> : null;
 
   return (
-    <View style={[styles.readerScreen, { paddingBottom: insets.bottom }]}>
+    <View testID="reader-screen" style={[styles.readerScreen, { paddingBottom: insets.bottom }]}>
       <View testID="reader-header" style={[styles.readerHeader, { paddingTop: insets.top, paddingBottom: 12 }]}>
         <Pressable accessibilityRole="button" testID="reader-back" style={styles.backButton}
           accessibilityLabel={closing ? 'Finishing saves before returning to library'

@@ -71,6 +71,46 @@ test('save stays disabled until the highlight list has loaded', async () => {
   expect(screen.getByTestId('save-highlight')).toBeEnabled();
 });
 
+test('a failed highlight load keeps save disabled until the panel retry succeeds', async () => {
+  const db = await openTestDatabase();
+  const getAll = db.getAllAsync.bind(db);
+  let failNext = true;
+  db.getAllAsync = (async (...args: Parameters<typeof getAll>) => {
+    if (failNext) { failNext = false; throw new Error('disk I/O error'); }
+    return getAll(...args);
+  }) as typeof db.getAllAsync;
+
+  await render(<ReaderScreen book={makeBook()} onClose={jest.fn()} />);
+  await measureFrame();
+  await engineReady();
+  await select();
+
+  expect(screen.getByTestId('save-highlight')).toBeDisabled();
+  await fireEvent.press(screen.getByTestId('highlights-toggle'));
+  expect(await screen.findByText('Saved highlights could not be read from this device.')).toBeTruthy();
+
+  await fireEvent.press(screen.getByText('Retry'));
+
+  expect(await screen.findByText('Save highlight')).toBeTruthy();
+  expect(screen.getByTestId('save-highlight')).toBeEnabled();
+});
+
+test('a saved position is handed to the engine as its initial location', async () => {
+  await openTestDatabase();
+  await render(<ReaderScreen book={{ ...makeBook(), resumeCfi: 'epubcfi(/6/4!/4/2/1:0)' }} onClose={jest.fn()} />);
+  await measureFrame();
+
+  expect(latestReaderProps()?.initialLocation).toBe('epubcfi(/6/4!/4/2/1:0)');
+  expect(screen.getByText('Resumed from this book’s last saved reading position.')).toBeTruthy();
+});
+
+test('the screen clears the bottom safe-area inset', async () => {
+  await openTestDatabase();
+  await render(<ReaderScreen book={makeBook()} onClose={jest.fn()} />);
+
+  expect(screen.getByTestId('reader-screen')).toHaveStyle({ paddingBottom: 34 });
+});
+
 test('a running export blocks save, delete and close until it settles', async () => {
   const db = await openTestDatabase();
   const book = makeBook();
@@ -191,9 +231,11 @@ test('backgrounding the app and closing the reader write the pending position', 
     handlers.push(handler);
     return { remove: jest.fn() };
   }) as never);
-  const onClose = jest.fn();
+  let writesWhenClosed = -1;
+  const onClose = jest.fn(() => { writesWhenClosed = positionWrites(db).length; });
+  const book = makeBook();
 
-  await render(<ReaderScreen book={makeBook()} onClose={onClose} />);
+  await render(<ReaderScreen book={book} onClose={onClose} />);
   await measureFrame();
   await engineReady();
 
@@ -205,11 +247,18 @@ test('backgrounding the app and closing the reader write the pending position', 
   });
   expect(positionWrites(db)).toHaveLength(1);
 
-  await act(() => { relocate('epubcfi(/6/4!/4/2/1:3)'); });
+  // A burst of relocations right before the Library tap: the last one must be on disk by the
+  // time onClose runs, not merely queued.
+  await act(() => {
+    relocate('epubcfi(/6/4!/4/2/1:0)');
+    relocate('epubcfi(/6/4!/4/2/1:5)');
+    relocate('epubcfi(/6/4!/4/2/1:9)');
+  });
   expect(positionWrites(db)).toHaveLength(1);
   await fireEvent.press(screen.getByTestId('reader-back'));
   await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
-  expect(positionWrites(db)).toHaveLength(2);
+  expect(writesWhenClosed).toBe(2);
+  expect(await loadLastReadingPosition(db, book.id)).toMatchObject({ cfi: 'epubcfi(/6/4!/4/2/1:9)' });
 });
 
 test('unmounting without closing the reader still writes the pending position', async () => {
