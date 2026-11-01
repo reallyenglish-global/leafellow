@@ -13,3 +13,5 @@ node_modules/
 *.pdf
 *.key
 *.pem
+# Agent scratch (plan ledgers, briefs, review packages)
+.superpowers/
