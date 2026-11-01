@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { StyleSheet } from 'react-native';
 
-// The app palette, shared by the reader, the library screen and the database error screen.
+// The app palette, shared by the reader, the library screen and the error screens.
 export const PAPER = '#F7F3E8';
 export const INK = '#18312B';
 export const DANGER = '#8D3535';
