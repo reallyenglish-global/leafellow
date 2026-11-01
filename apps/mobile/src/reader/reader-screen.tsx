@@ -8,16 +8,6 @@ import { useSQLiteContext } from 'expo-sqlite';
 
 import { captureSelection, isSelectionCurrent, type PendingSelection } from '../../../../src/reader/highlight-selection';
 import {
-  PASSAGE_JUMP_TIMEOUT_MS,
-  buildPassageJumpScript,
-  createPassageJumpRequest,
-  passageJumpFailure,
-  passageJumpStatus,
-  readPassageJumpMessage,
-  type PassageJumpOutcome,
-  type PassageJumpRequest,
-} from '../../../../src/reader/passage-jump';
-import {
   createExportGuard,
   exportFileName,
   runHighlightExport,
@@ -31,6 +21,7 @@ import { createSerialWriter } from '../../../../src/storage/serial-writes';
 import { systemFolderDestination } from '../highlight-export-destination';
 import { MOSS, READER_THEME, styles } from './reader-theme';
 import { useHighlights } from './use-highlights';
+import { usePassageJump } from './use-passage-jump';
 import { highlightCfi, useReaderMarks } from './use-reader-marks';
 import { useReadingPosition } from './use-reading-position';
 
@@ -93,10 +84,9 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
   const [selection, setSelection] = useState<PendingSelection | null>(null);
   const [selectionNotice, setSelectionNotice] = useState('');
   const [error, setError] = useState('');
-  const [highlightMessage, setHighlightMessage] = useState('');
-  const [highlightError, setHighlightError] = useState('');
+  // The notice for a tapped mark; save, delete and go-to messages come from their hooks.
+  const [pressNotice, setPressNotice] = useState('');
   const [showHighlights, setShowHighlights] = useState(false);
-  const [jump, setJump] = useState<{ id: string; request: PassageJumpRequest } | null>(null);
   const [closing, setClosing] = useState(false);
   // Bumped on every engine onReady, including WebView reloads, which drop all drawn marks.
   const [readyGeneration, setReadyGeneration] = useState(0);
@@ -115,6 +105,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
     return () => { active.current = false; };
   }, []);
   const { highlights, listState, saving, deletingId, ...saved } = useHighlights(session, active);
+  const passage = usePassageJump(reader, active);
   const { markError, reset: resetMarks } = useReaderMarks(readerRef, highlights, readyGeneration);
   const { progress, positionError, onLocationChange: savePosition, close: closePosition } = useReadingPosition(db, writer, book, active);
   // Handlers ask the flow, not exportState: two taps before a re-render must not act on stale state.
@@ -131,12 +122,11 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
     onChange: state => { if (active.current) setExportState(state); },
   }));
   const currentHref = useRef<string | null>(null);
-  const pendingJump = useRef<PassageJumpRequest | null>(null);
 
   function clearMessages() {
-    setHighlightMessage('');
-    setHighlightError('');
+    setPressNotice('');
     saved.clearMessages();
+    passage.clearMessages();
   }
 
   useEffect(() => {
@@ -148,36 +138,11 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
     return () => clearTimeout(timer);
   }, [readyGeneration]);
 
-  const finishJump = useCallback((outcome: PassageJumpOutcome) => {
-    pendingJump.current = null;
-    setJump(null);
-    if (outcome.status === 'confirmed') {
-      setHighlightMessage(outcome.fullyVisible
-        ? 'Showing this highlight.'
-        : 'Showing the start of this highlight; it continues below.');
-    } else if (outcome.status === 'failed') {
-      setHighlightError(outcome.reason);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!jump) return;
-    const timer = setTimeout(() => {
-      if (pendingJump.current === jump.request) finishJump(passageJumpStatus(jump.request, Date.now()));
-    }, Math.max(0, PASSAGE_JUMP_TIMEOUT_MS - (Date.now() - jump.request.requestedAt)));
-    return () => clearTimeout(timer);
-  }, [jump, finishJump]);
-
   function handleReady(location: { start?: { href?: string } } | undefined) {
     currentHref.current = location?.start?.href ?? null;
     resetMarks();
-    if (pendingJump.current) finishJump(passageJumpFailure('reloaded'));
+    passage.onReady();
     setReadyGeneration(generation => generation + 1);
-  }
-
-  function handleWebViewMessage(message: unknown) {
-    const outcome = readPassageJumpMessage(pendingJump.current, message);
-    if (outcome && outcome.status !== 'in-progress') finishJump(outcome);
   }
 
   function handleSelected(text: string, cfiRange: string) {
@@ -211,26 +176,6 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
     });
   }
 
-  function goToHighlight(highlight: SavedHighlight) {
-    const cfi = highlightCfi(highlight);
-    if (!cfi || pendingJump.current || highlight.annotation.anchor.format !== 'epub') return;
-    clearMessages();
-    let request: PassageJumpRequest;
-    try {
-      request = createPassageJumpRequest(cfi, highlight.annotation.quote.exact, Date.now());
-    } catch {
-      finishJump(passageJumpFailure('invalid-target'));
-      return;
-    }
-    pendingJump.current = request;
-    setJump({ id: highlight.id, request });
-    try {
-      reader.injectJavascript(buildPassageJumpScript(request));
-    } catch {
-      finishJump(passageJumpFailure('engine-unavailable'));
-    }
-  }
-
   function deleteHighlight(highlight: SavedHighlight) {
     if (deletingId || writer.isClosed() || exportGuard.isBusy()) return;
     clearMessages();
@@ -257,11 +202,14 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
   const canSave = !saving && !closing && !exportBusy && listState.status === 'ready';
   const canExport = !closing && !exportBusy && listState.status === 'ready' && highlights.length > 0;
 
+  // One notice line, as before the split: a tapped mark, then a go-to result, then a save or delete.
+  const notice = pressNotice || passage.notice || saved.notice;
+
   async function closeReader() {
     if (closing || exportGuard.isBusy()) return;
     setClosing(true);
     setSelection(null);
-    pendingJump.current = null;
+    passage.cancel();
     await closePosition();
     active.current = false;
     onClose();
@@ -302,13 +250,13 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
           allowPopups={false}
           defaultTheme={READER_THEME}
           onReady={(_total, location) => handleReady(location)}
-          onWebViewMessage={handleWebViewMessage}
+          onWebViewMessage={passage.onWebViewMessage}
           onSelected={handleSelected}
           onPressAnnotation={(annotation) => {
             const pressed = highlights.find(item => highlightCfi(item) === annotation.cfiRange);
             if (pressed) {
               setShowHighlights(true);
-              setHighlightMessage(`Saved highlight: “${pressed.annotation.quote.exact.trim().slice(0, 80)}”`);
+              setPressNotice(`Saved highlight: “${pressed.annotation.quote.exact.trim().slice(0, 80)}”`);
             }
           }}
           onLocationChange={(_total, location, nextProgressPercent) => {
@@ -349,9 +297,9 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
         </View>
       ) : null}
       {selectionNotice ? <Text accessibilityRole="alert" style={styles.notice}>{selectionNotice}</Text> : null}
-      {highlightMessage || saved.notice ? <Text accessibilityLiveRegion="polite" style={styles.notice}>{highlightMessage || saved.notice}</Text> : null}
+      {notice ? <Text accessibilityLiveRegion="polite" style={styles.notice}>{notice}</Text> : null}
       {saved.error ? <Text accessibilityRole="alert" style={styles.error}>{saved.error}</Text> : null}
-      {highlightError ? <Text accessibilityRole="alert" style={styles.error}>{highlightError}</Text> : null}
+      {passage.error ? <Text accessibilityRole="alert" style={styles.error}>{passage.error}</Text> : null}
       {markError ? <Text accessibilityRole="alert" style={styles.error}>{markError}</Text> : null}
       <Pressable
         accessibilityRole="button"
@@ -454,13 +402,13 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={`Go to highlight: ${highlight.annotation.quote.exact.trim().slice(0, 60)}`}
-                  accessibilityState={{ disabled: jump !== null || closing || readyGeneration === 0, busy: jump?.id === highlight.id }}
-                  disabled={jump !== null || closing || readyGeneration === 0}
+                  accessibilityState={{ disabled: passage.jump !== null || closing || readyGeneration === 0, busy: passage.jump?.id === highlight.id }}
+                  disabled={passage.jump !== null || closing || readyGeneration === 0}
                   testID="highlight-go-to"
-                  onPress={() => goToHighlight(highlight)}
+                  onPress={() => { if (passage.goTo(highlight)) { setPressNotice(''); saved.clearMessages(); } }}
                   style={styles.rowButton}
                 >
-                  <Text style={styles.rowButtonText}>{jump?.id === highlight.id ? 'Checking…' : 'Go to'}</Text>
+                  <Text style={styles.rowButtonText}>{passage.jump?.id === highlight.id ? 'Checking…' : 'Go to'}</Text>
                 </Pressable>
                 <Pressable
                   accessibilityRole="button"
