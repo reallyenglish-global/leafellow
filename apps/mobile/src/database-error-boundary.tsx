@@ -2,6 +2,8 @@
 import { Component, type ReactNode } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 
+import { DANGER, INK, PAPER } from './reader/reader-theme';
+
 type Props = { children: ReactNode };
 type State = { error: Error | null };
 
@@ -30,8 +32,8 @@ export class DatabaseErrorBoundary extends Component<Props, State> {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, justifyContent: 'center', paddingHorizontal: 26, backgroundColor: '#F7F3E8' },
-  title: { color: '#18312B', fontSize: 28, lineHeight: 34, fontWeight: '600', marginBottom: 14 },
-  body: { color: '#18312B', fontSize: 16, lineHeight: 24, marginBottom: 18 },
-  detail: { color: '#8D3535', fontSize: 13, lineHeight: 19, fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }) },
+  screen: { flex: 1, justifyContent: 'center', paddingHorizontal: 26, backgroundColor: PAPER },
+  title: { color: INK, fontSize: 28, lineHeight: 34, fontWeight: '600', marginBottom: 14 },
+  body: { color: INK, fontSize: 16, lineHeight: 24, marginBottom: 18 },
+  detail: { color: DANGER, fontSize: 13, lineHeight: 19, fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }) },
 });

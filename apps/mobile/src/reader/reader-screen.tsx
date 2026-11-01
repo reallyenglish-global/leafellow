@@ -3,7 +3,7 @@ import { Reader, ReaderProvider, useReader } from '@epubjs-react-native/core';
 import { useFileSystem } from '@epubjs-react-native/expo-file-system';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ActivityIndicator, AppState, Pressable, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
+import { ActivityIndicator, AppState, Pressable, ScrollView, Text, View, type LayoutChangeEvent } from 'react-native';
 import { useSQLiteContext } from 'expo-sqlite';
 
 import { captureSelection, isSelectionCurrent, type PendingSelection } from '../../../../src/reader/highlight-selection';
@@ -32,6 +32,7 @@ import { saveLastReadingPosition } from '../../../../src/storage/reading-positio
 import { HighlightExportUnreadableError, HighlightOutcomeUnknownError, type SavedHighlight } from '../../../../src/storage/saved-highlights';
 import { createSerialWriter } from '../../../../src/storage/serial-writes';
 import { systemFolderDestination } from '../highlight-export-destination';
+import { HIGHLIGHT_STYLE, MOSS, READER_THEME, styles } from './reader-theme';
 
 // uri is what the renderer loads: the picked file itself, or an app-owned temporary cache copy of
 // its validated bytes (Android). release removes that copy, if any.
@@ -81,10 +82,6 @@ function describeExportResult(result: ExportFlowResult): { message: string; fail
 function exportId(): string {
   return `${Date.now().toString(36)}${Math.floor(Math.random() * 0x100000000).toString(36)}`;
 }
-
-const HIGHLIGHT_STYLE = { color: '#E8C547', opacity: 0.45 };
-// Module-level so its identity is stable: Reader reloads the whole WebView when defaultTheme changes.
-const READER_THEME = { body: { color: '#18312B', background: '#F7F3E8', 'font-family': 'Georgia, serif', 'line-height': '1.7' } };
 
 function highlightCfi(highlight: SavedHighlight): string {
   return highlight.annotation.anchor.format === 'epub' ? highlight.annotation.anchor.cfi : '';
@@ -603,7 +600,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
         </Text>
       ) : null}
       {positionError ? <Text accessibilityRole="alert" style={styles.error}>{positionError}</Text> : null}
-      {reader.isLoading ? <ActivityIndicator accessibilityLabel="Loading book" style={styles.loading} color="#356B52" /> : null}
+      {reader.isLoading ? <ActivityIndicator accessibilityLabel="Loading book" style={styles.loading} color={MOSS} /> : null}
     </View>
   );
 }
@@ -617,42 +614,3 @@ export function ReaderScreen({ book, onClose }: { book: OpenBook; onClose: () =>
     </ReaderProvider>
   );
 }
-
-const styles = StyleSheet.create({
-  pressed: { opacity: 0.84 },
-  disabled: { opacity: 0.65 },
-  readerScreen: { flex: 1, backgroundColor: '#F7F3E8' },
-  readerHeader: { minHeight: 70, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#173F35' },
-  backButton: { paddingVertical: 8, paddingRight: 4 },
-  backText: { color: '#F7F3E8', fontSize: 15, fontWeight: '600' },
-  bookTitle: { flex: 1, color: '#F7F3E8', fontSize: 15, fontWeight: '600' },
-  progress: { minWidth: 44, color: '#C5D8C1', fontSize: 12, textAlign: 'right' },
-  readerFrame: { flex: 1, minHeight: 0, overflow: 'hidden' },
-  resumeNote: { color: '#356B52', fontSize: 12, textAlign: 'center', paddingVertical: 8 },
-  selectionCard: { maxHeight: 200, margin: 12, padding: 16, borderRadius: 16, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E1E8DE' },
-  selectionLabel: { color: '#356B52', fontSize: 10, fontWeight: '700', letterSpacing: 1.2, marginBottom: 8 },
-  selectionScroll: { maxHeight: 90 },
-  selectionText: { color: '#18312B', fontSize: 15, lineHeight: 22 },
-  selectionHint: { color: '#5D6D60', fontSize: 11, marginTop: 9, lineHeight: 15 },
-  saveButton: { minHeight: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#173F35', marginTop: 10 },
-  saveButtonText: { color: '#F7F3E8', fontSize: 15, fontWeight: '700' },
-  notice: { color: '#356B52', fontSize: 13, lineHeight: 19, paddingHorizontal: 12, paddingVertical: 4 },
-  highlightToggle: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 16, borderTopWidth: 1, borderColor: '#E1E8DE' },
-  highlightToggleText: { color: '#173F35', fontSize: 14, fontWeight: '600' },
-  highlightPanel: { maxHeight: 420, paddingHorizontal: 12, paddingBottom: 8, gap: 6 },
-  highlightScroll: { maxHeight: 180 },
-  highlightRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 },
-  highlightQuote: { flex: 1, color: '#18312B', fontSize: 14, lineHeight: 20 },
-  rowButton: { minHeight: 44, minWidth: 44, justifyContent: 'center', paddingHorizontal: 6 },
-  rowButtonText: { color: '#173F35', fontSize: 14, fontWeight: '600' },
-  deleteText: { color: '#8D3535', fontSize: 14, fontWeight: '600' },
-  errorText: { flex: 1, color: '#8D3535', fontSize: 13, lineHeight: 19 },
-  exportCard: { padding: 12, borderRadius: 12, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E1E8DE', gap: 6 },
-  exportText: { flex: 1, color: '#18312B', fontSize: 13, lineHeight: 19 },
-  checkRow: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  checkBox: { color: '#173F35', fontSize: 20 },
-  exportActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  exportButton: { flex: 1, marginTop: 0, paddingHorizontal: 12 },
-  error: { color: '#8D3535', fontSize: 14, lineHeight: 20, padding: 12, backgroundColor: '#FCEEEE', borderRadius: 12 },
-  loading: { position: 'absolute', top: 86, alignSelf: 'center' },
-});

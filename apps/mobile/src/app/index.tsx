@@ -9,6 +9,7 @@ import { useSQLiteContext } from 'expo-sqlite';
 import { inspectEpub, validateEpubFile } from '../../../../src/reader/import-epub';
 import { clearLastReadingPosition, loadLastReadingPosition } from '../../../../src/storage/reading-position';
 import { ReaderScreen, type OpenBook } from '../reader/reader-screen';
+import { INK, PAPER } from '../reader/reader-theme';
 import { createAppRendererSources } from '../reader-source-fs';
 
 export default function HomeScreen() {
@@ -108,7 +109,7 @@ export default function HomeScreen() {
             onPress={openEpub}
             style={({ pressed }) => [styles.openButton, pressed && styles.pressed, busy && styles.disabled]}
           >
-            {busy ? <ActivityIndicator color="#F7F3E8" /> : <Text style={styles.openButtonText}>Choose an EPUB</Text>}
+            {busy ? <ActivityIndicator color={PAPER} /> : <Text style={styles.openButtonText}>Choose an EPUB</Text>}
           </Pressable>
           {message ? <Text accessibilityRole="alert" style={styles.message}>{message}</Text> : null}
           <Text style={styles.note}>Re-select the same EPUB to resume. Positions and private highlights are stored locally, with no automatic upload. Some files need a temporary reading copy in app cache; cleanup is attempted on close and next start. A crash or cleanup error may leave it there until a later cleanup.</Text>
@@ -123,15 +124,15 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#F7F3E8' },
-  home: { flex: 1, paddingHorizontal: 26, paddingTop: 18, paddingBottom: 20, justifyContent: 'space-between', backgroundColor: '#F7F3E8' },
+  safeArea: { flex: 1, backgroundColor: PAPER },
+  home: { flex: 1, paddingHorizontal: 26, paddingTop: 18, paddingBottom: 20, justifyContent: 'space-between', backgroundColor: PAPER },
   wordmark: { color: '#173F35', fontSize: 23, fontWeight: '700', letterSpacing: -0.8 },
   hero: { width: '100%', maxWidth: 520, alignSelf: 'center', gap: 18, paddingVertical: 24 },
   eyebrow: { color: '#5D6D60', fontSize: 11, letterSpacing: 1.7, fontWeight: '700' },
-  title: { color: '#18312B', fontSize: 38, lineHeight: 44, fontWeight: '600', letterSpacing: -1.1 },
+  title: { color: INK, fontSize: 38, lineHeight: 44, fontWeight: '600', letterSpacing: -1.1 },
   description: { color: '#5D6D60', fontSize: 17, lineHeight: 26, maxWidth: 390 },
   openButton: { minHeight: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: '#173F35', paddingHorizontal: 22, marginTop: 4 },
-  openButtonText: { color: '#F7F3E8', fontSize: 16, fontWeight: '700' },
+  openButtonText: { color: PAPER, fontSize: 16, fontWeight: '700' },
   pressed: { opacity: 0.84 },
   disabled: { opacity: 0.65 },
   note: { color: '#5D6D60', fontSize: 13, lineHeight: 19 },
