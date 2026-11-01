@@ -8,7 +8,13 @@ An open-source reading companion for understanding difficult passages, bridging 
 
 ## Status
 
-**Early project foundation — not a working ereader yet.** This repository contains the initial brand identity, renderer, validation tests, product brief, gated roadmap and a first shared TypeScript annotation core. The core creates/validates private EPUB/PDF records and serializes/restores them against the expected source identity. A first local-byte EPUB/PDF import adapter now parses generated test documents, extracts ordered text and returns source-bound text-range selections. There is no reader UI, mobile application, provider login, inference integration, sync service or social backend yet. Assets are an initial design for review, not trademark clearance.
+**Early mobile reader prototype — not a complete e-reader yet.** The shared TypeScript core imports bounded local EPUB/PDF text and source-bound passage selections. An Expo app is scaffolded in `apps/mobile` for Android and iOS, using Expo SDK 58.0.22 and React Native 0.88.1. It implements reflowable-EPUB import, reader selection preview, and single-position local resume metadata in SQLite; the exact same EPUB must be re-selected to resume, and book bytes are not retained by Leafellow. Native runtime behavior remains unverified. Web currently shows a scope notice; saved highlights, PDF rendering, AI/provider integration, and sync are not implemented. Slice 1's feasibility record and remaining limits are documented in Life OS. Brand assets are an initial design, not trademark clearance.
+
+**Slice status:**
+- 0b. Local document import: merged (PR #2, green Actions at exact head)
+- 1. Requirements and bounded feasibility: design review complete; Android/iOS and Alice's Adventures in Wonderland were selected for the initial mobile EPUB prototype.
+- 2. Personal reading vertical slice: approved and in progress; Expo SDK 58 / React Native 0.88.1 app scaffolded. Native device validation is pending.
+- 4. Sync and invite-only reading rooms: still awaiting separate approval.
 
 ## The idea
 
@@ -32,16 +38,17 @@ The first learning scenario is technical reading with gaps in mathematics. Other
 
 ## Check the foundation and annotation core
 
-Use Node.js 24+ and Python 3.10+. The annotation core has no runtime dependencies. The document-import adapter uses pinned parsing/hashing dependencies; TypeScript is a locked development dependency.
+Use Node.js 24+ (Node 24 and 26 are CI targets), pnpm 10.29.3 and Python 3.10+.
 
 ```sh
-npm ci --ignore-scripts
-npm run typecheck
-npm test
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm --filter @leafellow/mobile typecheck
+pnpm test
 python3 -m unittest discover -s tests -v
 ```
 
-GitHub Actions checks the Python foundation and runs annotation/import tests and type checks on Node 24 and 26. These checks do not establish browser rendering or native device compatibility.
+GitHub Actions checks the foundation and core/mobile types on Node 24 and 26, verifies Expo SDK compatibility, and runs the iOS Simulator build/launch smoke workflow on macOS. The iOS workflow is configured but has not yet run on GitHub; no local Xcode/Android SDK is available on the development host.
 
 Rebuild the brand assets (Python 3.10+, Cairo system library, and a local Lato Semibold font):
 

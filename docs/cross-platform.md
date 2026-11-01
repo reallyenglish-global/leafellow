@@ -2,11 +2,11 @@
 
 ## Confirmed requirement
 
-Leafellow must support **web, Android and iOS**. This is a product requirement, not optional future expansion. No build or device test has established support yet. A primary test device is still useful for scheduling, but must not become a single-platform architecture decision.
+Leafellow must support **web, Android and iOS**. This is a product requirement, not optional future expansion. The initial implementation slice is Android/iOS; no native device test has established support yet. The web route currently presents a scope notice only and is not reader support.
 
-## Recommended stack — proposed, not yet implemented
+## Selected stack — initial app implementation
 
-**React Native + Expo + TypeScript + Expo Router**, using React Native Web for shared application UI. Flutter remains viable; the recommendation reflects the existing React/TypeScript direction and the importance of browser document rendering, not a claim that Flutter cannot serve the web.
+**React Native 0.88.1 + Expo SDK 58.0.22 + TypeScript + Expo Router**, using React Native Web as the planned shared UI layer. These were the latest registry versions when selected and `expo install --check` passes. The `apps/mobile` workspace uses pnpm. Android/iOS app code now exists; web reader support remains unimplemented. This selection does not prove that the EPUB engine, selection, or platform adapters satisfy the full reader contract.
 
 A single-platform Swift/Kotlin product no longer meets the requirement. Native reader modules may still be platform-specific implementation details behind shared interfaces.
 
@@ -28,6 +28,10 @@ Compare two bounded routes using the same authorized file and representative pas
 1. Browser reader plus mobile DOM/WebView embedding. This may share EPUB/math rendering, but selection menus, scrolling, offline resources, accessibility and the bridge need actual native testing. Book content must remain isolated from application/provider privileges; no permissive bridge into untrusted documents.
 2. Browser reader plus native Swift/Kotlin readers behind the same application contract. This can offer better platform integration but introduces separate engines, native bindings and locator translation.
 
+### Initial mobile EPUB prototype
+
+`apps/mobile` uses `@epubjs-react-native/core` 1.4.8 with its Expo FileSystem adapter 2.0.0. The app pre-validates the chosen local EPUB with the shared bounded parser and explicitly disables scripted EPUB content and popups. This package is an initial feasibility candidate only: Android/iOS runtime, CFI selection, annotation/highlight behavior, active-resource isolation, and accessibility remain unverified. In particular, do not enable scripted EPUB content merely to repair a platform issue; re-evaluate the engine if the secure setting blocks required behavior.
+
 Do not promise that a locator copied between different engines identifies the same range. Define a canonical source identity and quote/context fallback, test portability explicitly, and show ambiguous matches rather than silently moving notes. Cross-device sync remains a separately designed feature, not an automatic consequence of shared code.
 
 Readium Web currently documents EPUB support, not PDF parity. It describes complementary TypeScript navigation and Go publication-serving toolkits; a browser-local import is not established merely by choosing the TypeScript toolkit. Do not introduce mandatory cloud book upload or a Go backend without an explicit rights/privacy/architecture decision. PDF is now a required format and needs a separately evaluated engine; see [EPUB/PDF scope](formats.md).
@@ -44,7 +48,7 @@ Ship small vertical increments across all three rather than completing web and i
 
 ## Still needed
 
-Choose representative authorized EPUB and PDF sources and decide scanned/fixed-layout scope; choose supported provider route and budget; name the maths reference/reviewer. These remain unresolved even though target platforms are settled. No framework dependencies or app scaffold have been added by this documentation update.
+Alice's Adventures in Wonderland was selected as the initial authorized EPUB source (Project Gutenberg eBook 11, EPUB3). Its source file was downloaded to local scratch for validation and was not added to the repository. A representative PDF source and full web/Android/iOS device matrix remain to be selected. Scanned/fixed-layout/equation scope, provider route and budget, and the maths reference/reviewer are still unresolved.
 
 ## Documentation inspected
 

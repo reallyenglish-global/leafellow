@@ -1,0 +1,43 @@
+{
+  "expo": {
+    "name": "Leafellow",
+    "slug": "leafellow",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/brand/leafellow-icon.png",
+    "scheme": "leafellow",
+    "userInterfaceStyle": "light",
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#173F35",
+        "foregroundImage": "./assets/brand/leafellow-icon.png"
+      },
+      "predictiveBackGestureEnabled": true,
+      "package": "com.anonymous.leafellow"
+    },
+    "web": {
+      "output": "server",
+      "favicon": "./assets/brand/leafellow-icon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#173F35",
+          "image": "./assets/brand/leafellow-icon.png",
+          "imageWidth": 160
+        }
+      ],
+      "expo-font",
+      "expo-sqlite"
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    },
+    "ios": {
+      "bundleIdentifier": "com.anonymous.leafellow"
+    }
+  }
+}

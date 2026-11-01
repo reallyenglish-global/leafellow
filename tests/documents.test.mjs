@@ -59,12 +59,20 @@ test('rejects unsupported, empty, malformed and oversized sources deliberately',
   await assert.rejects(() => importDocument(new Uint8Array([80, 75, 3, 4])), /Invalid EPUB/);
 });
 
-test('rejects EPUB traversal, XML declarations, malformed XML and active content', async () => {
+test('accepts a harmless HTML5 doctype in XHTML spine items', async () => {
+  const document = await importDocument(epubBytes({
+    'OPS/one.xhtml': strToU8('<!DOCTYPE html><html><body>A safe chapter.</body></html>'),
+  }));
+  assert.equal(document.parts[0].text, 'A safe chapter.');
+});
+
+test('rejects EPUB traversal, unsafe XML declarations, malformed XML and active content', async () => {
   const opf = strFromU8(epubEntries()['OPS/package.opf']);
   for (const [overrides, message] of [
     [{ '../escape.txt': strToU8('outside') }, /Unsafe EPUB path/],
     [{ 'OPS/package.opf': strToU8(opf.replace('one.xhtml', '%2e%2e/one.xhtml')) }, /Unsafe EPUB path/],
-    [{ 'OPS/one.xhtml': strToU8('<!DOCTYPE html><html><body>Test</body></html>') }, /XML declarations/],
+    [{ 'OPS/one.xhtml': strToU8('<!DOCTYPE html SYSTEM "https://example.invalid/evil.dtd"><html><body>Test</body></html>') }, /XML declarations/],
+    [{ 'OPS/one.xhtml': strToU8('<!DOCTYPE html [<!ENTITY x "unsafe">]><html><body>Test</body></html>') }, /XML declarations/],
     [{ 'OPS/one.xhtml': strToU8('<html><body>unclosed') }, /Invalid EPUB XML/],
     [{ 'OPS/one.xhtml': strToU8('<html><body><script>throw 1</script></body></html>') }, /Active EPUB content/],
     [{ 'OPS/one.xhtml': strToU8('<html><body onload="bad()">Test</body></html>') }, /Active EPUB content/],

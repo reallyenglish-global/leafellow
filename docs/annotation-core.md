@@ -36,4 +36,4 @@ Every cycle was actually run; this summary is not a claim of persisted failing C
 
 ## Verification and limitations
 
-`npm test`, `npm run typecheck`, `python3 -m unittest discover -s tests -v`, `git diff --check`. Keep observed RED/GREEN evidence with the PR. Import safety, anchor resolution/reflow correctness, encrypted storage, renderer integration, browser tests and Android/iOS device tests are later acceptance work, not covered by these unit tests.
+`pnpm test`, `pnpm typecheck`, `python3 -m unittest discover -s tests -v`, `git diff --check`. Keep observed RED/GREEN evidence with the PR. Import safety, anchor resolution/reflow correctness, encrypted storage, renderer integration, browser tests and Android/iOS device tests are later acceptance work, not covered by these unit tests.

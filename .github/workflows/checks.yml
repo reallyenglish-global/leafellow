@@ -1,4 +1,4 @@
-name: Foundation and core checks
+name: Foundation, core, and mobile checks
 on:
   push:
   pull_request:
@@ -9,29 +9,39 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Validate brand assets and project foundation
         run: python3 -m unittest discover -s tests -v
-      - name: Check whitespace
+      - name: Check committed whitespace
         run: git diff-tree --check --root HEAD
-  core:
+  core-and-mobile:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         node: [24, 26]
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10.29.3
+          run_install: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node }}
-          cache: npm
-      - name: Install locked development dependencies without lifecycle scripts
-        run: npm ci --ignore-scripts
-      - name: Type-check shared domain code
-        run: npm run typecheck
-      - name: Test annotation and document-import contracts
-        run: npm test
-      - name: Audit installed dependencies
-        run: npm audit --audit-level=high
+          cache: pnpm
+      - name: Install locked workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Type-check shared and mobile code
+        run: |
+          pnpm typecheck
+          pnpm --filter @leafellow/mobile typecheck
+      - name: Test shared import and annotation contracts
+        run: pnpm test
+      - name: Check Expo SDK dependency compatibility
+        run: pnpm --filter @leafellow/mobile exec expo install --check
+      - name: Diagnose Expo project configuration
+        run: pnpm --filter @leafellow/mobile exec expo-doctor
+      - name: Audit dependencies (fail on high or critical)
+        run: pnpm audit --audit-level high
