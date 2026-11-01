@@ -36,7 +36,8 @@ jobs:
       - name: Generate the iOS project from Expo config
         run: pnpm --filter @leafellow/mobile prebuild:ios
       - name: Install CocoaPods dependencies
-        run: pod install --project-directory=apps/mobile/ios
+        working-directory: apps/mobile/ios
+        run: pod install
       - name: Select an available iPhone simulator
         id: simulator
         shell: bash
