@@ -360,6 +360,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
             : exportBusy ? 'Back to library, unavailable until the export finishes or is cancelled' : 'Back to library'}
           accessibilityState={{ disabled: closing || exportBusy }}
           disabled={closing || exportBusy}
+          testID="reader-back"
           onPress={() => { void closeReader(); }}
           style={styles.backButton}
         >
@@ -416,13 +417,14 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
         <View style={styles.selectionCard}>
           <Text style={styles.selectionLabel}>PASSAGE PREVIEW</Text>
           <ScrollView style={styles.selectionScroll}>
-            <Text selectable style={styles.selectionText}>{selection.exact}</Text>
+            <Text selectable testID="passage-preview-text" style={styles.selectionText}>{selection.exact}</Text>
           </ScrollView>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Save this passage as a private highlight"
             accessibilityState={{ disabled: !canSave, busy: saving }}
             disabled={!canSave}
+            testID="save-highlight"
             onPress={saveSelection}
             style={({ pressed }) => [styles.saveButton, pressed && styles.pressed, !canSave && styles.disabled]}
           >
@@ -440,6 +442,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ expanded: showHighlights }}
+        testID="highlights-toggle"
         onPress={() => setShowHighlights(open => !open)}
         style={styles.highlightToggle}
       >
@@ -480,6 +483,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
                 accessibilityRole="checkbox"
                 accessibilityState={{ checked: exportState.acknowledged }}
                 accessibilityLabel="I understand the exported file leaves Leafellow’s private storage"
+                testID="export-acknowledge"
                 onPress={() => {
                   const current = exportFlow.state();
                   if (current.status === 'preview') exportFlow.setAcknowledged(!current.acknowledged);
@@ -495,6 +499,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
                   accessibilityLabel={`Choose a folder and export ${plural(exportState.count)}`}
                   accessibilityState={{ disabled: !exportState.acknowledged }}
                   disabled={!exportState.acknowledged}
+                  testID="export-confirm"
                   onPress={confirmExport}
                   style={({ pressed }) => [styles.saveButton, styles.exportButton, pressed && styles.pressed, !exportState.acknowledged && styles.disabled]}
                 >
@@ -511,6 +516,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
               accessibilityLabel={`Export this book’s ${plural(highlights.length)} to a folder you choose`}
               accessibilityState={{ disabled: !canExport, busy: exportBusy }}
               disabled={!canExport}
+              testID="export-start"
               onPress={startExport}
               style={[styles.rowButton, !canExport && styles.disabled]}
             >
@@ -536,6 +542,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
                   accessibilityLabel={`Go to highlight: ${highlight.annotation.quote.exact.trim().slice(0, 60)}`}
                   accessibilityState={{ disabled: jump !== null || closing || readyGeneration === 0, busy: jump?.id === highlight.id }}
                   disabled={jump !== null || closing || readyGeneration === 0}
+                  testID="highlight-go-to"
                   onPress={() => goToHighlight(highlight)}
                   style={styles.rowButton}
                 >
@@ -546,6 +553,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
                   accessibilityLabel={`Delete highlight: ${highlight.annotation.quote.exact.trim().slice(0, 60)}`}
                   accessibilityState={{ disabled: deletingId !== null || closing || exportBusy, busy: deletingId === highlight.id }}
                   disabled={deletingId !== null || closing || exportBusy}
+                  testID="highlight-delete"
                   onPress={() => deleteHighlight(highlight)}
                   style={styles.rowButton}
                 >
@@ -631,6 +639,7 @@ export default function HomeScreen() {
             accessibilityRole="button"
             accessibilityLabel="Choose an EPUB to read"
             disabled={busy}
+            testID="open-epub"
             onPress={openEpub}
             style={({ pressed }) => [styles.openButton, pressed && styles.pressed, busy && styles.disabled]}
           >

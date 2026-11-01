@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+# Choose the staged fixture in the real Android system file picker (DocumentsUI).
+appId: ${APP_ID}
+---
+- tapOn:
+    id: "open-epub"
+# The picker may open on Recent, Downloads or the last folder used. Navigation is conditional;
+# choosing the file is not.
+- runFlow:
+    when:
+      notVisible: "leafellow-fixture\\.epub"
+    commands:
+      - tapOn: "Show roots"
+      - tapOn: "Downloads"
+- extendedWaitUntil:
+    visible: "leafellow-fixture\\.epub"
+    timeout: 20000
+- tapOn: "leafellow-fixture\\.epub"
+- extendedWaitUntil:
+    visible:
+      id: "highlights-toggle"
+    timeout: 60000

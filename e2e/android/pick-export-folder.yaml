@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+# Grant the new shared folder /sdcard/Documents/LeafellowExports in the system folder picker.
+# STORAGE_ROOT is a regex of the primary storage root titles the wrapper read from the device.
+appId: ${APP_ID}
+---
+- extendedWaitUntil:
+    visible: "Show roots"
+    timeout: 20000
+- tapOn: "Show roots"
+- tapOn: "${STORAGE_ROOT}"
+- extendedWaitUntil:
+    visible: "Documents"
+    timeout: 15000
+- tapOn: "Documents"
+- extendedWaitUntil:
+    visible: "LeafellowExports"
+    timeout: 15000
+- tapOn: "LeafellowExports"
+- tapOn: "(?i)use this folder"
+- tapOn: "(?i)allow"

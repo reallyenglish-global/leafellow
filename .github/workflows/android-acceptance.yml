@@ -1,0 +1,183 @@
+# Android reader acceptance on an emulator.
+# The APK is a prototype Release build signed with the generated template's debug key. It is not a
+# store or distribution build, and no signing secrets are used.
+name: Android reader acceptance
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: android-acceptance-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+env:
+  CI: "1"
+  EXPO_NO_TELEMETRY: "1"
+  APK_ARTIFACT: leafellow-android-release-apk-${{ github.run_id }}
+jobs:
+  build:
+    name: Build Release APK (x86_64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10.29.3
+          run_install: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install locked workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Checks before native generation
+        run: |
+          pnpm typecheck
+          pnpm --filter @leafellow/mobile typecheck
+          pnpm test
+          python3 -m unittest discover -s tests -v
+      - name: Record hosted Android SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --list_installed
+          java -version
+      - name: Generate the Android project from Expo config
+        run: pnpm --filter @leafellow/mobile exec expo prebuild --platform android --no-install
+      - name: Assemble Release APK for the emulator ABI
+        working-directory: apps/mobile/android
+        run: ./gradlew assembleRelease -PreactNativeArchitectures=x86_64 --max-workers=2 --no-daemon
+      - name: Record APK checksum and provenance
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/apk"
+          mkdir -p "$OUT"
+          cp apps/mobile/android/app/build/outputs/apk/release/app-release.apk "$OUT/app-release.apk"
+          (cd "$OUT" && sha256sum app-release.apk > app-release.apk.sha256)
+          python3 - "$OUT" <<'PY'
+          import hashlib, json, os, subprocess, sys
+          out = sys.argv[1]
+          apk = os.path.join(out, 'app-release.apk')
+          provenance = {
+              'checkoutSha': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
+              'pullRequestHeadSha': os.environ.get('PR_HEAD_SHA') or None,
+              'event': os.environ['EVENT_NAME'],
+              'runId': os.environ['RUN_ID'],
+              'buildAttempt': os.environ['RUN_ATTEMPT'],
+              'apkSha256': hashlib.sha256(open(apk, 'rb').read()).hexdigest(),
+              'abi': 'x86_64',
+              'variant': 'release, template debug-key signing, prototype only',
+          }
+          with open(os.path.join(out, 'provenance.json'), 'w') as f:
+              json.dump(provenance, f, indent=2)
+              f.write('\n')
+          print(json.dumps(provenance, indent=2))
+          PY
+      - name: Upload APK, checksum and provenance
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ env.APK_ARTIFACT }}
+          path: ${{ runner.temp }}/apk/
+          if-no-files-found: error
+          retention-days: 7
+
+  acceptance:
+    name: Reader acceptance on API 36 emulator
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      MAESTRO_VERSION: 2.12.0
+      MAESTRO_SHA256: a6044a84542f522f434c5dc3d609e60c7446d423f3ed1b2ae513f5c48663ec5e
+      MAESTRO_CLI_NO_ANALYTICS: "1"
+      MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED: "true"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Download the exact APK artifact from this run
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: ${{ env.APK_ARTIFACT }}
+          path: ${{ runner.temp }}/apk
+      - name: Verify APK checksum and source provenance
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/apk"
+          sha256sum --check app-release.apk.sha256
+          python3 - <<'PY'
+          import hashlib, json, os, subprocess
+          p = json.load(open('provenance.json'))
+          head = subprocess.check_output(['git', '-C', os.environ['GITHUB_WORKSPACE'], 'rev-parse', 'HEAD'], text=True).strip()
+          checks = {
+              'apkSha256': p['apkSha256'] == hashlib.sha256(open('app-release.apk', 'rb').read()).hexdigest(),
+              'runId': p['runId'] == os.environ['RUN_ID'],
+              'checkoutSha': p['checkoutSha'] == head,
+              'pullRequestHeadSha': p['pullRequestHeadSha'] == (os.environ.get('PR_HEAD_SHA') or None),
+          }
+          print(json.dumps(checks))
+          if not all(checks.values()):
+              raise SystemExit('APK provenance does not match this run and checkout')
+          PY
+      - name: Generate the synthetic EPUB fixture
+        run: python3 scripts/android_fixture_epub.py "$RUNNER_TEMP/fixture"
+      - name: Install Maestro CLI from a verified release archive
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/maestro-dl"
+          curl --fail --location --silent --show-error --retry 3 \
+            -o "$RUNNER_TEMP/maestro-dl/maestro.zip" \
+            "https://github.com/mobile-dev-inc/maestro/releases/download/cli-${MAESTRO_VERSION}/maestro.zip"
+          echo "${MAESTRO_SHA256}  $RUNNER_TEMP/maestro-dl/maestro.zip" | sha256sum --check
+          unzip -q "$RUNNER_TEMP/maestro-dl/maestro.zip" -d "$RUNNER_TEMP/maestro-dl"
+          echo "$RUNNER_TEMP/maestro-dl/maestro/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/maestro-dl/maestro/bin/maestro" --version
+      - name: Enable KVM for the hosted emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Record hosted Android SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --list_installed
+      - name: Run reader acceptance on the emulator
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-boot-timeout: 900
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot
+          script: bash scripts/android-acceptance-run.sh --apk "${{ runner.temp }}/apk/app-release.apk" --fixture-dir "${{ runner.temp }}/fixture" --flow e2e/android/reader-acceptance.yaml --out "${{ runner.temp }}/acceptance"
+      - name: Upload acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: leafellow-android-acceptance-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/acceptance/
+            ${{ runner.temp }}/apk/provenance.json
+            ${{ runner.temp }}/fixture/leafellow-fixture.json
+          if-no-files-found: error
+          retention-days: 14
