@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+# Select only the synthetic companion app's empty export folder, not Leafellow's private data.
+appId: ${APP_ID}
+---
+- runFlow:
+    file: open-fixture-shelf.yaml
+    env:
+      PICKER_CHILD: "LeafellowExports"
+- extendedWaitUntil:
+    visible:
+      text: "LeafellowExports"
+      below: "Search"
+    timeout: 15000
+- tapOn:
+    text: "LeafellowExports"
+    below: "Search"
+# iOS directory selection commits through Open, not Android's Use this folder / Allow.
+- extendedWaitUntil:
+    visible:
+      text: "Open"
+      enabled: true
+    timeout: 15000
+- tapOn:
+    text: "Open"
+    enabled: true
