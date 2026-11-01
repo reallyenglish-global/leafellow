@@ -11,7 +11,7 @@
     "web": "expo start --web",
     "prebuild:ios": "expo prebuild --platform ios --no-install",
     "typecheck": "tsc --noEmit",
-    "lint": "expo lint",
+    "lint": "expo lint --max-warnings 0",
     "test": "NODE_OPTIONS=\"--experimental-vm-modules --disable-warning=ExperimentalWarning\" jest"
   },
   "dependencies": {
