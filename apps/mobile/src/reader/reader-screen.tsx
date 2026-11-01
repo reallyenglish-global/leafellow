@@ -26,10 +26,11 @@ import {
 } from '../../../../src/storage/highlight-export';
 import { createExportFlow, type ExportFlowResult, type ExportFlowState } from '../../../../src/storage/highlight-export-flow';
 import { createHighlightSession } from '../../../../src/storage/highlight-session';
-import { HighlightExportUnreadableError, HighlightOutcomeUnknownError, type SavedHighlight } from '../../../../src/storage/saved-highlights';
+import { HighlightExportUnreadableError, type SavedHighlight } from '../../../../src/storage/saved-highlights';
 import { createSerialWriter } from '../../../../src/storage/serial-writes';
 import { systemFolderDestination } from '../highlight-export-destination';
 import { HIGHLIGHT_STYLE, MOSS, READER_THEME, styles } from './reader-theme';
+import { useHighlights } from './use-highlights';
 import { useReadingPosition } from './use-reading-position';
 
 // uri is what the renderer loads: the picked file itself, or an app-owned temporary cache copy of
@@ -37,7 +38,6 @@ import { useReadingPosition } from './use-reading-position';
 export type OpenBook = { name: string; uri: string; id: string; resumeCfi: string | null; release: () => void };
 // The renderer reports no error when its WebView never loads the book, so stop waiting honestly.
 const READER_OPEN_TIMEOUT_MS = 30_000;
-type ListState = { status: 'loading' } | { status: 'error' } | { status: 'ready'; unreadable: number };
 const plural = (count: number) => `${count} highlight${count === 1 ? '' : 's'}`;
 
 function describeExport(outcome: ExportOutcome, count: number): { message: string; failed: boolean } {
@@ -85,10 +85,6 @@ function highlightCfi(highlight: SavedHighlight): string {
   return highlight.annotation.anchor.format === 'epub' ? highlight.annotation.anchor.cfi : '';
 }
 
-function sortHighlights(list: SavedHighlight[]): SavedHighlight[] {
-  return [...list].sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-}
-
 function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void }) {
   const db = useSQLiteContext();
   const [readerSize, setReaderSize] = useState({ width: 0, height: 0 });
@@ -100,12 +96,8 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
   const [selection, setSelection] = useState<PendingSelection | null>(null);
   const [selectionNotice, setSelectionNotice] = useState('');
   const [error, setError] = useState('');
-  const [highlights, setHighlights] = useState<SavedHighlight[]>([]);
-  const [listState, setListState] = useState<ListState>({ status: 'loading' });
   const [highlightMessage, setHighlightMessage] = useState('');
   const [highlightError, setHighlightError] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [showHighlights, setShowHighlights] = useState(false);
   const [jump, setJump] = useState<{ id: string; request: PassageJumpRequest } | null>(null);
   const [closing, setClosing] = useState(false);
@@ -121,6 +113,11 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
   const [exportGuard] = useState(createExportGuard);
   const [exportState, setExportState] = useState<ExportFlowState>({ status: 'idle' });
   const active = useRef(true);
+  useEffect(() => {
+    active.current = true;
+    return () => { active.current = false; };
+  }, []);
+  const { highlights, listState, saving, deletingId, ...saved } = useHighlights(session, active);
   const { progress, positionError, onLocationChange: savePosition, close: closePosition } = useReadingPosition(db, writer, book, active);
   // Handlers ask the flow, not exportState: two taps before a re-render must not act on stale state.
   const [exportFlow] = useState(() => createExportFlow({
@@ -139,23 +136,11 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
   const applied = useRef(new Set<string>());
   const pendingJump = useRef<PassageJumpRequest | null>(null);
 
-  const loadHighlights = useCallback(async () => {
-    setListState({ status: 'loading' });
-    const result = await session.load();
-    if (!active.current || result.status === 'stale') return;
-    if (result.status === 'error') {
-      setListState({ status: 'error' });
-      return;
-    }
-    setHighlights(result.highlights);
-    setListState({ status: 'ready', unreadable: result.unreadable });
-  }, [session]);
-
-  useEffect(() => {
-    active.current = true;
-    void loadHighlights();
-    return () => { active.current = false; };
-  }, [loadHighlights]);
+  function clearMessages() {
+    setHighlightMessage('');
+    setHighlightError('');
+    saved.clearMessages();
+  }
 
   useEffect(() => { readerRef.current = reader; });
 
@@ -229,8 +214,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
   }
 
   function handleSelected(text: string, cfiRange: string) {
-    setHighlightMessage('');
-    setHighlightError('');
+    clearMessages();
     const result = captureSelection(text, cfiRange, {
       documentId: book.id,
       // Only this book's own location report; never provider state that may predate it.
@@ -254,35 +238,16 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
       setSelectionNotice('The reader moved since this passage was selected. Select it again to save it.');
       return;
     }
-    setSaving(true);
-    setHighlightMessage('');
-    setHighlightError('');
-    session.save({
-      documentId: pending.documentId, exact: pending.exact, cfi: pending.cfi, href: pending.href, createdAt: Date.now(),
-    })
-      .then(({ highlight: saved, created }) => {
-        if (!active.current) return;
-        setHighlights(current => sortHighlights([...current.filter(item => item.id !== saved.id), saved]));
-        setSelection(current => (current === pending ? null : current));
-        setHighlightMessage(created ? 'Highlight saved on this device.' : 'This passage was already saved.');
-      })
-      .catch((reason: unknown) => {
-        if (!active.current) return;
-        if (reason instanceof HighlightOutcomeUnknownError) {
-          setHighlightError('The save may have finished, but it could not be confirmed. Checking saved highlights again.');
-          void loadHighlights();
-          return;
-        }
-        setHighlightError(reason instanceof RangeError ? `Not saved: ${reason.message}.` : 'The highlight could not be saved on this device. Nothing was saved.');
-      })
-      .finally(() => { if (active.current) setSaving(false); });
+    clearMessages();
+    void saved.save(pending).then(stored => {
+      if (stored && active.current) setSelection(current => (current === pending ? null : current));
+    });
   }
 
   function goToHighlight(highlight: SavedHighlight) {
     const cfi = highlightCfi(highlight);
     if (!cfi || pendingJump.current || highlight.annotation.anchor.format !== 'epub') return;
-    setHighlightMessage('');
-    setHighlightError('');
+    clearMessages();
     let request: PassageJumpRequest;
     try {
       request = createPassageJumpRequest(cfi, highlight.annotation.quote.exact, Date.now());
@@ -301,33 +266,14 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
 
   function deleteHighlight(highlight: SavedHighlight) {
     if (deletingId || writer.isClosed() || exportGuard.isBusy()) return;
-    setDeletingId(highlight.id);
-    setHighlightMessage('');
-    setHighlightError('');
-    // The marks effect removes the drawn mark once the row leaves the list.
-    session.remove(highlight.id)
-      .then(removed => {
-        if (!active.current) return;
-        setHighlights(current => current.filter(item => item.id !== highlight.id));
-        setHighlightMessage(removed ? 'Highlight deleted.' : 'This highlight was already gone.');
-      })
-      .catch((reason: unknown) => {
-        if (!active.current) return;
-        if (reason instanceof HighlightOutcomeUnknownError) {
-          setHighlightError('The delete may have finished, but it could not be confirmed. Checking saved highlights again.');
-          void loadHighlights();
-          return;
-        }
-        setHighlightError('The highlight could not be deleted. It is still saved.');
-      })
-      .finally(() => { if (active.current) setDeletingId(null); });
+    clearMessages();
+    saved.remove(highlight);
   }
 
   function startExport() {
     if (closing || writer.isClosed()) return;
     if (!exportFlow.start()) return;
-    setHighlightMessage('');
-    setHighlightError('');
+    clearMessages();
   }
 
   function cancelExport() {
@@ -436,7 +382,8 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
         </View>
       ) : null}
       {selectionNotice ? <Text accessibilityRole="alert" style={styles.notice}>{selectionNotice}</Text> : null}
-      {highlightMessage ? <Text accessibilityLiveRegion="polite" style={styles.notice}>{highlightMessage}</Text> : null}
+      {highlightMessage || saved.notice ? <Text accessibilityLiveRegion="polite" style={styles.notice}>{highlightMessage || saved.notice}</Text> : null}
+      {saved.error ? <Text accessibilityRole="alert" style={styles.error}>{saved.error}</Text> : null}
       {highlightError ? <Text accessibilityRole="alert" style={styles.error}>{highlightError}</Text> : null}
       {markError ? <Text accessibilityRole="alert" style={styles.error}>{markError}</Text> : null}
       <Pressable
@@ -457,7 +404,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
           {listState.status === 'error' ? (
             <View style={styles.highlightRow}>
               <Text accessibilityRole="alert" style={styles.errorText}>Saved highlights could not be read from this device.</Text>
-              <Pressable accessibilityRole="button" onPress={() => { void loadHighlights(); }} style={styles.rowButton}>
+              <Pressable accessibilityRole="button" onPress={() => { void saved.load(); }} style={styles.rowButton}>
                 <Text style={styles.rowButtonText}>Retry</Text>
               </Pressable>
             </View>

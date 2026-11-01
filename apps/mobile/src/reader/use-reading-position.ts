@@ -11,7 +11,7 @@ import type { OpenBook } from './reader-screen';
 type Position = { documentId: string; cfi: string; progress: number; updatedAt: number };
 
 /** Progress for the header and the debounced, flush-on-background write of the reading position. */
-export function useReadingPosition(db: PositionDatabase, writer: SerialWriter, book: OpenBook, active: RefObject<boolean>) {
+export function useReadingPosition(db: PositionDatabase, writer: SerialWriter, book: OpenBook, activeRef: RefObject<boolean>) {
   const [progress, setProgress] = useState<number | null>(null);
   const [positionError, setPositionError] = useState('');
   // Created on first use from an effect or a handler, never during render, and kept for the
@@ -21,13 +21,13 @@ export function useReadingPosition(db: PositionDatabase, writer: SerialWriter, b
   const positionWriter = useCallback(() => {
     latest.current ??= createLatestWriter<Position>(
       position => writer.run(() => saveLastReadingPosition(db, position)).then(
-        () => { if (active.current) setPositionError(''); },
-        () => { if (active.current) setPositionError('The reading position could not be saved on this device.'); },
+        () => { if (activeRef.current) setPositionError(''); },
+        () => { if (activeRef.current) setPositionError('The reading position could not be saved on this device.'); },
       ),
       { delayMs: 750 },
     );
     return latest.current;
-  }, [db, writer, active]);
+  }, [db, writer, activeRef]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', state => {
