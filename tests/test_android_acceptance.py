@@ -210,7 +210,7 @@ class WrapperTests(unittest.TestCase):
         maestro = [c for c in self.calls() if c.startswith('maestro ')]
         self.assertEqual(len(maestro), 1)
         for flag in ('--format junit', f'--output {self.out}/junit.xml', f'--test-output-dir {self.out}/maestro',
-                     f'--debug-output {self.out}/maestro-debug', '-e APP_ID=com.anonymous.leafellow',
+                     f'--debug-output {self.out}/maestro-debug', '-e APP_ID=com.reallyenglish.leafellow',
                      r'-e STORAGE_ROOT=Internal\ storage|Pixel\ 6|sdk_gphone64_x86_64'):
             self.assertIn(flag, maestro[0])
         self.assertIn('adb push', '\n'.join(self.calls()))
