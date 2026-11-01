@@ -3,7 +3,7 @@ import { Reader, ReaderProvider, useReader } from '@epubjs-react-native/core';
 import { useFileSystem } from '@epubjs-react-native/expo-file-system';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ActivityIndicator, AppState, Pressable, ScrollView, Text, View, type LayoutChangeEvent } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, Text, View, type LayoutChangeEvent } from 'react-native';
 import { useSQLiteContext } from 'expo-sqlite';
 
 import { captureSelection, isSelectionCurrent, type PendingSelection } from '../../../../src/reader/highlight-selection';
@@ -17,7 +17,6 @@ import {
   type PassageJumpOutcome,
   type PassageJumpRequest,
 } from '../../../../src/reader/passage-jump';
-import { normalizeEpubReaderProgress } from '../../../../src/reader/reader-progress';
 import {
   createExportGuard,
   exportFileName,
@@ -27,12 +26,11 @@ import {
 } from '../../../../src/storage/highlight-export';
 import { createExportFlow, type ExportFlowResult, type ExportFlowState } from '../../../../src/storage/highlight-export-flow';
 import { createHighlightSession } from '../../../../src/storage/highlight-session';
-import { createLatestWriter } from '../../../../src/storage/latest-writer';
-import { saveLastReadingPosition } from '../../../../src/storage/reading-position';
 import { HighlightExportUnreadableError, HighlightOutcomeUnknownError, type SavedHighlight } from '../../../../src/storage/saved-highlights';
 import { createSerialWriter } from '../../../../src/storage/serial-writes';
 import { systemFolderDestination } from '../highlight-export-destination';
 import { HIGHLIGHT_STYLE, MOSS, READER_THEME, styles } from './reader-theme';
+import { useReadingPosition } from './use-reading-position';
 
 // uri is what the renderer loads: the picked file itself, or an app-owned temporary cache copy of
 // its validated bytes (Android). release removes that copy, if any.
@@ -101,9 +99,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
   const insets = useSafeAreaInsets();
   const [selection, setSelection] = useState<PendingSelection | null>(null);
   const [selectionNotice, setSelectionNotice] = useState('');
-  const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState('');
-  const [positionError, setPositionError] = useState('');
   const [highlights, setHighlights] = useState<SavedHighlight[]>([]);
   const [listState, setListState] = useState<ListState>({ status: 'loading' });
   const [highlightMessage, setHighlightMessage] = useState('');
@@ -125,14 +121,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
   const [exportGuard] = useState(createExportGuard);
   const [exportState, setExportState] = useState<ExportFlowState>({ status: 'idle' });
   const active = useRef(true);
-  // Scroll relocations arrive in bursts; only the newest position is written, after a short pause.
-  const [positionWriter] = useState(() => createLatestWriter<{ documentId: string; cfi: string; progress: number; updatedAt: number }>(
-    position => writer.run(() => saveLastReadingPosition(db, position)).then(
-      () => { if (active.current) setPositionError(''); },
-      () => { if (active.current) setPositionError('The reading position could not be saved on this device.'); },
-    ),
-    { delayMs: 750 },
-  ));
+  const { progress, positionError, onLocationChange: savePosition, close: closePosition } = useReadingPosition(db, writer, book, active);
   // Handlers ask the flow, not exportState: two taps before a re-render must not act on stale state.
   const [exportFlow] = useState(() => createExportFlow({
     guard: exportGuard,
@@ -169,13 +158,6 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
   }, [loadHighlights]);
 
   useEffect(() => { readerRef.current = reader; });
-
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', state => {
-      if (state !== 'active') void positionWriter.flush();
-    });
-    return () => subscription.remove();
-  }, [positionWriter]);
 
   useEffect(() => {
     if (readyGeneration > 0) {
@@ -244,11 +226,6 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
   function handleWebViewMessage(message: unknown) {
     const outcome = readPassageJumpMessage(pendingJump.current, message);
     if (outcome && outcome.status !== 'in-progress') finishJump(outcome);
-  }
-
-  function saveLocation(cfi: string, progressFraction: number) {
-    if (writer.isClosed()) return;
-    positionWriter.set({ documentId: book.id, cfi, progress: progressFraction, updatedAt: Date.now() });
   }
 
   function handleSelected(text: string, cfiRange: string) {
@@ -372,8 +349,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
     setClosing(true);
     setSelection(null);
     pendingJump.current = null;
-    await positionWriter.close();
-    await writer.close();
+    await closePosition();
     active.current = false;
     onClose();
   }
@@ -431,12 +407,7 @@ function ReaderSurface({ book, onClose }: { book: OpenBook; onClose: () => void 
                 setSelectionNotice('The reader moved to another chapter, so the earlier selection was cleared.');
               }
             }
-            setProgress(nextProgressPercent);
-            try {
-              saveLocation(location.start.cfi, normalizeEpubReaderProgress(nextProgressPercent));
-            } catch {
-              setPositionError('The reader reported invalid progress; this position was not saved.');
-            }
+            savePosition(location, nextProgressPercent);
           }}
           onDisplayError={(reason) => setError(`This EPUB could not be displayed: ${reason}`)}
         />}

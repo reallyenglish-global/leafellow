@@ -176,3 +176,22 @@ test('backgrounding the app and closing the reader write the pending position', 
   await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
   expect(positionWrites(db)).toHaveLength(2);
 });
+
+test('unmounting without closing the reader still writes the pending position', async () => {
+  jest.useFakeTimers();
+  const db = await openTestDatabase();
+  const book = makeBook();
+  await render(<ReaderScreen book={book} onClose={jest.fn()} />);
+  await measureFrame();
+  await engineReady();
+
+  await act(() => { relocate('epubcfi(/6/4!/4/2/1:4)'); });
+  expect(positionWrites(db)).toHaveLength(0);
+
+  await act(async () => {
+    screen.unmount();
+    await jest.advanceTimersByTimeAsync(0);
+  });
+  expect(positionWrites(db)).toHaveLength(1);
+  expect(await loadLastReadingPosition(db, book.id)).toMatchObject({ cfi: 'epubcfi(/6/4!/4/2/1:4)' });
+});
