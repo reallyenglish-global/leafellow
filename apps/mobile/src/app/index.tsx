@@ -642,7 +642,7 @@ export default function HomeScreen() {
       const picked = await File.pickFileAsync({ mimeTypes: ['application/epub+zip'] });
       if (picked.canceled) return;
       const file = picked.result;
-      validateEpubFile(file.name, file.size);
+      validateEpubFile(file.name, file.size, file.type);
       const bytes = new Uint8Array(await file.arrayBuffer());
       const inspected = await inspectEpub(bytes);
       // The renderer gets exactly these validated bytes; the picked file is never read again.
