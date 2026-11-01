@@ -9,7 +9,7 @@ import { useSQLiteContext } from 'expo-sqlite';
 import { inspectEpub, validateEpubFile } from '../../../../src/reader/import-epub';
 import { clearLastReadingPosition, loadLastReadingPosition } from '../../../../src/storage/reading-position';
 import { ReaderScreen, type OpenBook } from '../reader/reader-screen';
-import { INK, PAPER } from '../reader/reader-theme';
+import { FOREST, INK, MOSS, MUTED, PAPER } from '../reader/reader-theme';
 import { createAppRendererSources } from '../reader-source-fs';
 
 export default function HomeScreen() {
@@ -126,18 +126,18 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: PAPER },
   home: { flex: 1, paddingHorizontal: 26, paddingTop: 18, paddingBottom: 20, justifyContent: 'space-between', backgroundColor: PAPER },
-  wordmark: { color: '#173F35', fontSize: 23, fontWeight: '700', letterSpacing: -0.8 },
+  wordmark: { color: FOREST, fontSize: 23, fontWeight: '700', letterSpacing: -0.8 },
   hero: { width: '100%', maxWidth: 520, alignSelf: 'center', gap: 18, paddingVertical: 24 },
-  eyebrow: { color: '#5D6D60', fontSize: 11, letterSpacing: 1.7, fontWeight: '700' },
+  eyebrow: { color: MUTED, fontSize: 11, letterSpacing: 1.7, fontWeight: '700' },
   title: { color: INK, fontSize: 38, lineHeight: 44, fontWeight: '600', letterSpacing: -1.1 },
-  description: { color: '#5D6D60', fontSize: 17, lineHeight: 26, maxWidth: 390 },
-  openButton: { minHeight: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: '#173F35', paddingHorizontal: 22, marginTop: 4 },
+  description: { color: MUTED, fontSize: 17, lineHeight: 26, maxWidth: 390 },
+  openButton: { minHeight: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: FOREST, paddingHorizontal: 22, marginTop: 4 },
   openButtonText: { color: PAPER, fontSize: 16, fontWeight: '700' },
   pressed: { opacity: 0.84 },
   disabled: { opacity: 0.65 },
-  note: { color: '#5D6D60', fontSize: 13, lineHeight: 19 },
-  message: { color: '#356B52', fontSize: 13, lineHeight: 19 },
+  note: { color: MUTED, fontSize: 13, lineHeight: 19 },
+  message: { color: MOSS, fontSize: 13, lineHeight: 19 },
   clearButton: { minHeight: 40, justifyContent: 'center', alignSelf: 'flex-start' },
-  clearButtonText: { color: '#5D6D60', fontSize: 13, textDecorationLine: 'underline' },
-  footer: { color: '#5D6D60', fontSize: 13, textAlign: 'center' },
+  clearButtonText: { color: MUTED, fontSize: 13, textDecorationLine: 'underline' },
+  footer: { color: MUTED, fontSize: 13, textAlign: 'center' },
 });
