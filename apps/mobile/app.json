@@ -13,7 +13,8 @@
         "foregroundImage": "./assets/brand/leafellow-icon.png"
       },
       "predictiveBackGestureEnabled": true,
-      "package": "com.anonymous.leafellow"
+      "package": "com.reallyenglish.leafellow",
+      "versionCode": 1
     },
     "web": {
       "output": "server",

@@ -13,3 +13,8 @@ node_modules/
 *.pdf
 *.key
 *.pem
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.password

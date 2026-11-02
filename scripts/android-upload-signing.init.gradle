@@ -1,0 +1,26 @@
+// Build-only release signing for Expo-generated Android projects.
+// Never commit credentials or add a debug-key fallback here.
+gradle.beforeProject { project ->
+    project.plugins.withId('com.android.application') {
+        project.extensions.getByName('androidComponents').finalizeDsl { android ->
+            def keyPath = System.getenv('LEAFELLOW_UPLOAD_KEYSTORE')
+            def passwordPath = System.getenv('LEAFELLOW_UPLOAD_PASSWORD_FILE')
+            if (!keyPath || !passwordPath) {
+                throw new GradleException('Missing Leafellow upload signing paths')
+            }
+            def password = new File(passwordPath).getText('UTF-8').trim()
+            if (!password) throw new GradleException('Empty upload password')
+            if (android.defaultConfig.applicationId != 'com.reallyenglish.leafellow') {
+                throw new GradleException('Unexpected Leafellow applicationId')
+            }
+            def signing = android.signingConfigs.maybeCreate('leafellowUpload')
+            signing.storeFile = new File(keyPath)
+            signing.storeType = 'PKCS12'
+            signing.storePassword = password
+            signing.keyAlias = 'leafellow-upload'
+            signing.keyPassword = password
+            android.buildTypes.getByName('release').signingConfig = signing
+            android.buildTypes.getByName('release').debuggable = false
+        }
+    }
+}

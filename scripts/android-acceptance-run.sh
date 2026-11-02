@@ -10,7 +10,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP_ID="com.anonymous.leafellow"
+APP_ID="com.reallyenglish.leafellow"
 APK="" FIXTURE_DIR="" FLOW="" OUT=""
 DEVICE_EPUB="/sdcard/Download/leafellow-fixture.epub"
 DEVICE_EXPORTS="/sdcard/Documents/LeafellowExports"

@@ -30,21 +30,34 @@ function runInFakeEngine(request, engine = {}) {
   const rendition = {
     display: cfi => {
       calls.display.push(cfi);
-      return engine.display ? engine.display(cfi) : Promise.resolve();
+      const display = engine.display ? engine.display(cfi) : Promise.resolve();
+      Promise.resolve(display).then(() => {
+        if (!engine.deferRelocation) calls.relocate();
+      }, () => {});
+      return display;
     },
+    on: (event, callback) => { if (event === 'relocated') calls.listener = callback; },
+    off: (event, callback) => { if (event === 'relocated' && calls.listener === callback) calls.listener = null; },
     getRange: cfi => (engine.renderedRange ? engine.renderedRange(cfi) : textRange(exact)),
     currentLocation: () => engine.location ?? {
       start: { cfi: 'epubcfi(/6/4[chap01]!/4/8/1:0)' },
       end: { cfi: 'epubcfi(/6/4[chap01]!/4/12/1:5)' },
     },
   };
+  calls.relocate = () => {
+    rendition.location = rendition.currentLocation();
+    calls.listener?.(rendition.location);
+  };
   const context = {
     window: { ReactNativeWebView: { postMessage: data => { posted.push(JSON.parse(data)); resolvePosted(); } } },
+    setTimeout: engine.setTimeout ?? setTimeout,
+    clearTimeout,
     Promise,
     JSON,
   };
   if (!engine.missingEngine) Object.assign(context, { book, rendition, ePub });
   vm.runInNewContext(buildPassageJumpScript(request), context);
+  engine.observe?.({ posted, calls });
   return firstPost.then(() => ({ message: posted[0], posted, calls }));
 }
 
@@ -64,8 +77,21 @@ test('confirms only after display resolves, the stored text matches and the rang
   });
 });
 
-test('an already-visible passage confirms without waiting for a relocated event', async () => {
-  // display resolves immediately and the engine emits nothing else; the check reads currentLocation.
+test('does not announce success until relocation updates the position that resize restores', async () => {
+  let state;
+  const result = runInFakeEngine(request(), {
+    deferRelocation: true,
+    observe: value => { state = value; },
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(state.posted.length, 0, 'display/currentLocation alone leave the resize cache stale');
+  state.calls.relocate();
+  const { message, calls } = await result;
+  assert.equal(message.status, 'confirmed');
+  assert.equal(calls.listener, null, 'the relocation listener is removed after completion');
+});
+
+test('an already-visible passage confirms after its display relocation report', async () => {
   const { message } = await runInFakeEngine(request(), { display: () => undefined });
   assert.equal(message.status, 'confirmed');
 });
@@ -94,6 +120,30 @@ test('another spine item on screen is not the passage', async () => {
     location: { start: { cfi: 'epubcfi(/6/6!/4/2/1:0)' }, end: { cfi: 'epubcfi(/6/6!/4/8/1:0)' } },
   });
   assert.equal(message.code, 'not-visible');
+});
+
+test('missing relocation fails closed and removes its listener before the host deadline', async () => {
+  let deadline;
+  const { message, calls } = await runInFakeEngine(request(), {
+    deferRelocation: true,
+    setTimeout: (callback, delay) => { deadline = delay; return setTimeout(callback, 1); },
+  });
+  assert.equal(message.code, 'not-visible');
+  assert.ok(deadline < PASSAGE_JUMP_TIMEOUT_MS);
+  assert.equal(calls.listener, null);
+});
+
+test('the relocation deadline removes its listener even when source text never resolves', async () => {
+  let state;
+  runInFakeEngine(request(), {
+    deferRelocation: true,
+    bookRange: () => new Promise(() => {}),
+    setTimeout: callback => setTimeout(callback, 1),
+    observe: value => { state = value; },
+  });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(state.calls.listener, null);
+  assert.equal(state.posted.length, 0, 'without verified source text the host must time out, not confirm');
 });
 
 test('fails closed when the text, the rendered view, display or the engine do not cooperate', async () => {
