@@ -1,0 +1,67 @@
+# Credential-free permanent-package inspection. VersionCode 1 is test-only, not a Play choice.
+name: Unsigned Android store-candidate verification
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: unsigned-store-candidate-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  unsigned-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CI: '1'
+      # Dispatch inputs are passed as data, never interpolated into shell code.
+      LEAFELLOW_ANDROID_VERSION_CODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10.29.3
+          run_install: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Validate dispatch input as data before dependency execution
+        run: node -e 'require("./apps/mobile/app.config.js")({config:require("./apps/mobile/app.json").expo})'
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm audit --audit-level=low
+      - run: pnpm typecheck && pnpm --filter @leafellow/mobile typecheck && pnpm test
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Exercise real archive-signature security regression tests
+        run: python3 -m unittest discover -s tests -v
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools build-tools;36.0.0 cmdline-tools;latest
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+      - name: Compile unsigned release APK and AAB with no credentials
+        run: |
+          pnpm --filter @leafellow/mobile exec expo prebuild --platform android --no-install
+          cd apps/mobile/android
+          ./gradlew :app:assembleRelease :app:bundleRelease --init-script "$GITHUB_WORKSPACE/scripts/android-unsigned.init.gradle" -PreactNativeArchitectures=armeabi-v7a,arm64-v8a,x86,x86_64 --max-workers=2 --no-daemon
+      - name: Stage unsigned inputs only
+        run: |
+          mkdir -p unsigned-artifacts
+          cp apps/mobile/android/app/build/outputs/bundle/release/app-release.aab unsigned-artifacts/
+          cp apps/mobile/android/app/build/outputs/apk/release/app-release-unsigned.apk unsigned-artifacts/
+      - name: Inspect actual permanent-package unsigned store bundle (not uploadable)
+        run: |
+          curl --fail --location --retry 3 https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar --output "$RUNNER_TEMP/bundletool.jar"
+          VERSION="$(python3 -c 'import json; print(json.load(open("apps/mobile/app.json"))["expo"]["version"])')"
+          python3 scripts/verify-play-artifact.py unsigned-artifacts/app-release.aab --require-unsigned --bundletool "$RUNNER_TEMP/bundletool.jar" --package com.reallyenglish.leafellow --version-code "$LEAFELLOW_ANDROID_VERSION_CODE" --version-name "$VERSION" --output unsigned-artifacts
+          printf 'sourceSha=%s\nversionCode=1\npurpose=unsigned permanent-package verification only; never upload\n' "$GITHUB_SHA" > unsigned-artifacts/provenance.txt
+          (cd unsigned-artifacts && sha256sum app-release.aab app-release-unsigned.apk > SHA256SUMS)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: leafellow-unsigned-store-check-${{ github.sha }}-${{ github.run_attempt }}
+          path: unsigned-artifacts/
+          if-no-files-found: error
+          retention-days: 7

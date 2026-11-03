@@ -20,6 +20,14 @@ class ArtifactTest(unittest.TestCase):
     def check(self, xml=XML, code='42', version='0.1.0'):
         return artifact.check_manifest(xml, 'com.reallyenglish.example', code, version)
 
+    def test_permanent_package_candidate_is_credential_free(self):
+        text = (ROOT / '.github/workflows/android-store-candidate.yml').read_text()
+        self.assertIn('pull_request:', text)
+        self.assertIn('verify-play-artifact.py unsigned-artifacts/app-release.aab --require-unsigned', text)
+        self.assertIn('purpose=unsigned permanent-package verification only; never upload', text)
+        for forbidden in ['secrets.', 'environment:', 'jarsigner', 'apksigner sign']:
+            self.assertNotIn(forbidden, text)
+
     def test_identity_version_and_permissions(self):
         result = self.check()
         self.assertEqual(result['targetSdkVersion'], 36)
