@@ -1,0 +1,12 @@
+// Credential-free release build; templates must never silently use the debug key.
+gradle.beforeProject { project ->
+    project.plugins.withId('com.android.application') {
+        project.extensions.getByName('androidComponents').finalizeDsl { android ->
+            if (android.defaultConfig.applicationId != 'com.reallyenglish.leafellow') {
+                throw new GradleException('Unexpected Leafellow applicationId')
+            }
+            android.buildTypes.getByName('release').signingConfig = null
+            android.buildTypes.getByName('release').debuggable = false
+        }
+    }
+}

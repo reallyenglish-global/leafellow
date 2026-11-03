@@ -1,2 +1,7 @@
 packages:
   - apps/mobile
+
+# Expo CLI build-time glob chain; patched majors assessed in docs/android-play-release.md.
+overrides:
+  glob: 14.0.3
+  minimatch: 11.0.4

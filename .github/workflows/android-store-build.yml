@@ -1,19 +1,33 @@
-name: Android signed bundle (build only)
+name: Signed Android release artifacts (build only)
+
 on:
   workflow_dispatch:
+    inputs:
+      version_code:
+        description: 'Unused positive Play versionCode (owner must check Play history)'
+        required: true
+        type: string
+
 permissions:
   contents: read
+
 concurrency:
-  group: leafellow-android-store-build
+  group: leafellow-android-signing
   cancel-in-progress: false
+
 jobs:
-  bundle:
+  unsigned-build:
     if: github.ref == 'refs/heads/main'
-    environment: android-signing
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      CI: '1'
+      # Dispatch inputs are passed as data, never interpolated into shell code.
+      LEAFELLOW_ANDROID_VERSION_CODE: ${{ inputs.version_code }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           version: 10.29.3
@@ -21,48 +35,120 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-          cache: pnpm
-      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+      - name: Validate dispatch input as data before dependency execution
+        run: node -e 'require("./apps/mobile/app.config.js")({config:require("./apps/mobile/app.json").expo})'
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm audit --audit-level=low
+      - run: pnpm typecheck && pnpm --filter @leafellow/mobile typecheck && pnpm test
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: '17'
-      - name: Install and check before accessing signing credentials
+      - name: Exercise real archive-signature security regression tests
+        run: python3 -m unittest discover -s tests -v
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools build-tools;36.0.0 cmdline-tools;latest
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools build-tools;36.0.0 cmdline-tools;latest
+      - name: Require real build-tools password regression controls
         run: |
-          pnpm install --frozen-lockfile
-          python3 -m unittest discover -s tests -v
-          pnpm test
-          pnpm typecheck
-          pnpm --filter @leafellow/mobile typecheck
-      - name: Build and verify signed AAB (never upload to Play)
+          test -f "$ANDROID_HOME/build-tools/36.0.0/lib/apksigner.jar"
+          python3 -m unittest discover -s tests -p '*apksigner_passwords*.py' -v
+      - name: Compile unsigned release APK and AAB with no credentials
+        run: |
+          pnpm --filter @leafellow/mobile exec expo prebuild --platform android --no-install
+          cd apps/mobile/android
+          ./gradlew :app:assembleRelease :app:bundleRelease --init-script "$GITHUB_WORKSPACE/scripts/android-unsigned.init.gradle" -PreactNativeArchitectures=armeabi-v7a,arm64-v8a,x86,x86_64 --max-workers=2 --no-daemon
+      - name: Stage unsigned inputs only
+        run: |
+          mkdir -p unsigned-artifacts
+          cp apps/mobile/android/app/build/outputs/bundle/release/app-release.aab unsigned-artifacts/
+          cp apps/mobile/android/app/build/outputs/apk/release/app-release-unsigned.apk unsigned-artifacts/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: leafellow-unsigned-${{ github.sha }}-${{ github.run_attempt }}
+          path: unsigned-artifacts/
+          if-no-files-found: error
+          retention-days: 7
+
+  signed-artifacts:
+    needs: unsigned-build
+    if: github.ref == 'refs/heads/main'
+    # Separate fresh VM: no npm, Expo, Gradle, build output execution or caches here.
+    environment: android-signing
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      LEAFELLOW_ANDROID_VERSION_CODE: ${{ inputs.version_code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools build-tools;36.0.0 cmdline-tools;latest
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: leafellow-unsigned-${{ github.sha }}-${{ github.run_attempt }}
+          path: unsigned-artifacts/
+      - name: Fetch independently pinned bundletool
+        run: curl --fail --location --retry 3 https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar --output "$RUNNER_TEMP/bundletool.jar"
+      - name: Independently inspect actual bundle before secrets enter scope
+        run: |
+          VERSION="$(python3 -c 'import json; print(json.load(open("apps/mobile/app.json"))["expo"]["version"])')"
+          python3 scripts/verify-play-artifact.py unsigned-artifacts/app-release.aab --require-unsigned --bundletool "$RUNNER_TEMP/bundletool.jar" --package com.reallyenglish.leafellow --version-code "$LEAFELLOW_ANDROID_VERSION_CODE" --version-name "$VERSION" --output release-artifacts
+      - name: Sign artifacts and verify expected upload certificate
         env:
           KEYSTORE_BASE64: ${{ secrets.LEAFELLOW_UPLOAD_KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.LEAFELLOW_UPLOAD_KEYSTORE_PASSWORD }}
-          LEAFELLOW_UPLOAD_KEYSTORE: ${{ runner.temp }}/leafellow-upload.p12
-          LEAFELLOW_UPLOAD_PASSWORD_FILE: ${{ runner.temp }}/leafellow-upload.password
         run: |
+          set -euo pipefail
           umask 077
+          KEY_DIR="$(mktemp -d "$RUNNER_TEMP/leafellow-signing.XXXXXX")"
+          export KEY_DIR
+          trap 'rm -rf "$KEY_DIR"' EXIT
+          export LEAFELLOW_UPLOAD_KEYSTORE="$KEY_DIR/upload.p12"
+          export LEAFELLOW_UPLOAD_PASSWORD_FILE="$KEY_DIR/upload.password"
           python3 - <<'PY'
-          import base64, os, pathlib
-          key = os.environ['KEYSTORE_BASE64']
-          password = os.environ['KEYSTORE_PASSWORD']
-          if not key or not password:
-              raise SystemExit('Protected android-signing environment secrets are required')
-          pathlib.Path(os.environ['LEAFELLOW_UPLOAD_KEYSTORE']).write_bytes(base64.b64decode(key, validate=True))
-          pathlib.Path(os.environ['LEAFELLOW_UPLOAD_PASSWORD_FILE']).write_text(password + '\n')
+          import base64, os
+          from pathlib import Path
+          if not os.environ['KEYSTORE_BASE64'] or not os.environ['KEYSTORE_PASSWORD']:
+              raise SystemExit('Required signing secrets are missing')
+          Path(os.environ['LEAFELLOW_UPLOAD_KEYSTORE']).write_bytes(base64.b64decode(os.environ['KEYSTORE_BASE64'], validate=True))
+          Path(os.environ['LEAFELLOW_UPLOAD_PASSWORD_FILE']).write_text(os.environ['KEYSTORE_PASSWORD'] + '\n')
           PY
           unset KEYSTORE_BASE64 KEYSTORE_PASSWORD
-          bash scripts/android-store-build.sh
-          cd apps/mobile/android/app/build/outputs/bundle/release
-          sha256sum app-release.aab > app-release.aab.sha256
-      - name: Delete temporary signing files
-        if: always()
-        run: rm -f "$RUNNER_TEMP/leafellow-upload.p12" "$RUNNER_TEMP/leafellow-upload.password"
-      - name: Archive bundle only (not credentials)
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+          keytool -exportcert -keystore "$LEAFELLOW_UPLOAD_KEYSTORE" -storepass:file "$LEAFELLOW_UPLOAD_PASSWORD_FILE" -alias leafellow-upload -file "$KEY_DIR/expected.der"
+          EXPECTED="$(sha256sum "$KEY_DIR/expected.der" | cut -d' ' -f1)"
+          test "$EXPECTED" = 36ad6f78053b792fd8dc6f81e6c56f7754063ea6831ca8165b1753ab72ca4246
+          cp unsigned-artifacts/app-release.aab release-artifacts/leafellow-release.aab
+          jarsigner -keystore "$LEAFELLOW_UPLOAD_KEYSTORE" -storepass:file "$LEAFELLOW_UPLOAD_PASSWORD_FILE" -keypass:file "$LEAFELLOW_UPLOAD_PASSWORD_FILE" release-artifacts/leafellow-release.aab leafellow-upload
+          python3 scripts/verify-upload-signature.py release-artifacts/leafellow-release.aab
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          "$BT/zipalign" -P 16 -f 4 unsigned-artifacts/app-release-unsigned.apk "$KEY_DIR/aligned.apk"
+          "$BT/apksigner" sign --ks "$LEAFELLOW_UPLOAD_KEYSTORE" --ks-key-alias leafellow-upload --ks-pass "file:$LEAFELLOW_UPLOAD_PASSWORD_FILE" --v4-signing-enabled false --out release-artifacts/leafellow-release.apk "$KEY_DIR/aligned.apk"
+          "$BT/zipalign" -c -P 16 4 release-artifacts/leafellow-release.apk
+          "$BT/apksigner" verify --verbose --print-certs release-artifacts/leafellow-release.apk > release-artifacts/apk-signature.txt
+          ACTUAL="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' release-artifacts/apk-signature.txt)"
+          test "$EXPECTED" = "$ACTUAL"
+          test "$(sed -n 's/^Number of signers: //p' release-artifacts/apk-signature.txt)" = 1
+          printf 'sourceSha=%s\nversionCode=%s\nuploadCertificateSha256=%s\n' "$GITHUB_SHA" "$LEAFELLOW_ANDROID_VERSION_CODE" "$EXPECTED" > release-artifacts/provenance.txt
+          (cd release-artifacts && sha256sum leafellow-release.aab leafellow-release.apk > SHA256SUMS)
+      - name: Verify final signed AAB bytes and APK manifest (no secrets in scope)
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest print release-artifacts/leafellow-release.apk > release-artifacts/apk-manifest.xml
+          VERSION="$(python3 -c 'import json; print(json.load(open("apps/mobile/app.json"))["expo"]["version"])')"
+          python3 scripts/verify-play-artifact.py release-artifacts/leafellow-release.aab --bundletool "$RUNNER_TEMP/bundletool.jar" --package com.reallyenglish.leafellow --version-code "$LEAFELLOW_ANDROID_VERSION_CODE" --version-name "$VERSION" --output release-artifacts --apk-manifest release-artifacts/apk-manifest.xml
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: leafellow-signed-aab-${{ github.sha }}
-          path: |
-            apps/mobile/android/app/build/outputs/bundle/release/app-release.aab
-            apps/mobile/android/app/build/outputs/bundle/release/app-release.aab.sha256
+          name: leafellow-signed-android-${{ inputs.version_code }}-${{ github.sha }}
+          path: release-artifacts/
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 14
