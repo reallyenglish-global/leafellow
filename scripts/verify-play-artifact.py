@@ -7,6 +7,7 @@ The bundletool binary is independently checksum-pinned before any Java execution
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 import struct
 import subprocess
@@ -59,7 +60,12 @@ def check_elf(data):
         raise ValueError('ELF library has no load segments')
 
 
-def inspect_bundle(bundle, jar, package, code, version):
+def check_unsigned_entries(names):
+    if any(re.fullmatch(r'META-INF/[^/]+\.(SF|RSA|DSA|EC)', name, re.I) for name in names):
+        raise ValueError('Unsigned input unexpectedly contains signing metadata')
+
+
+def inspect_bundle(bundle, jar, package, code, version, require_unsigned=False):
     if hashlib.sha256(jar.read_bytes()).hexdigest() != BUNDLETOOL_SHA256:
         raise ValueError('Untrusted bundletool checksum')
 
@@ -74,6 +80,8 @@ def inspect_bundle(bundle, jar, package, code, version):
     abis = set()
     with zipfile.ZipFile(bundle) as archive:
         names = archive.namelist()
+        if require_unsigned:
+            check_unsigned_entries(names)
         if len(names) != len(set(names)):
             raise ValueError('Duplicate bundle entries')
         for name in names:
@@ -105,8 +113,9 @@ def main():
     parser.add_argument('--version-name', required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--apk-manifest', type=Path)
+    parser.add_argument('--require-unsigned', action='store_true')
     args = parser.parse_args()
-    result, xml, config = inspect_bundle(args.bundle, args.bundletool, args.package, args.version_code, args.version_name)
+    result, xml, config = inspect_bundle(args.bundle, args.bundletool, args.package, args.version_code, args.version_name, args.require_unsigned)
     if args.apk_manifest:
         check_manifest(args.apk_manifest.read_text(), args.package, args.version_code, args.version_name)
     args.output.mkdir(parents=True, exist_ok=True)

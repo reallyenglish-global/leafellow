@@ -50,6 +50,12 @@ class ArtifactTest(unittest.TestCase):
         with self.assertRaises(Exception):
             self.check('<manifest')
 
+    def test_unsigned_input_rejects_existing_signatures(self):
+        artifact.check_unsigned_entries(['BundleConfig.pb', 'META-INF/MANIFEST.MF'])
+        for name in ['META-INF/DEBUG.RSA', 'META-INF/OLD.SF', 'META-INF/OLD.EC', 'META-INF/old.dsa']:
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                artifact.check_unsigned_entries([name])
+
     def elf(self, alignment=16384, offset=0, vaddr=0):
         data = bytearray(120)
         data[:6] = b'\x7fELF\x02\x01'
