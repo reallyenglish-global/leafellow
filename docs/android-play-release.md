@@ -1,5 +1,58 @@
 # Android / Google Play preparation
 
+## 2026-11-03 readiness update (supersedes hosted workflow notes below)
+
+The manual `Android signed artifacts (build only)` workflow now compiles **unsigned**
+APK/AAB files on one credential-free runner and signs them on a fresh,
+human-approved `android-signing` runner. The signing runner never installs pnpm
+packages or executes Gradle/Expo/build output. It checks actual AAB bytes with
+SHA256-pinned bundletool 1.18.3 before secrets enter scope and again after signing.
+Checks include exact package/version, API >=36, non-debug/non-test-only flags,
+permissions inventory, arm64 presence, 64-bit ELF 16-KB load alignment, bundle
+16-KB ZIP-alignment configuration, and the signed APK manifest. Signatures must
+match the existing upload key; signed APK ZIP alignment is checked independently.
+Artifacts include signed APK/AAB, SHA256SUMS, source/version/certificate provenance,
+manifest/config/inspection reports and APK signer evidence, retained for 14 days.
+No Publisher credentials, upload step, or rollout exists.
+
+After review and a separately approved merge and signing run:
+
+```sh
+gh workflow run android-store-build.yml --repo reallyenglish-global/leafellow \
+  --ref main -f version_code=UNUSED_POSITIVE_INTEGER
+```
+
+Replace the placeholder only after checking **all** Play tracks and prior uploads.
+Approve the protected signing job as a human after checking the exact source SHA.
+Inspect/download the actual artifacts; do not approve a different-source rerun by
+reference to old evidence. The existing static development versionCode 1 is kept;
+`LEAFELLOW_ANDROID_VERSION_CODE` supplies the validated explicit store build code.
+The app version remains 0.1.0; ListenUp's 2026.1 branding is not copied blindly.
+
+Live GitHub readback on 2026-11-03 found `android-signing` restricted to `main`,
+reviewer `joeywang`, admin bypass disabled, and the two expected secret names.
+`prevent_self_review=false` allows the owner to initiate and review; it does not
+allow an agent acting through that account to approve a signing job. Secret names
+are presence evidence, not successful decryption/signing evidence.
+
+The locked Expo CLI chain had moderate glob/minimatch advisories. Pnpm workspace
+overrides pin glob 14.0.3 and minimatch 11.0.4 (patched majors because no patched
+old-major versions were offered by the advisory). Node 24+ is already required.
+Local audit, Expo compatibility, core tests and typechecks are gates; hosted
+prebuild/native checks are still necessary to validate the CLI override at build time.
+No runtime reader behavior, content, or iOS identifier was intentionally changed.
+
+**Not yet publish-ready:** no signed release build from this candidate is recorded,
+no release-device/Play pre-launch acceptance is claimed, and Console enrollment,
+privacy/Data safety/audience declarations, listing assets, unused version code and
+independent key recovery still require owner verification. Existing Android
+acceptance builds use the template debug key and are not store artifacts. Leafellow
+reader-hardening PR #9 was open at the initial live check; decide its integration
+before pinning the release candidate. Do not treat an earlier session's merge claim
+as evidence. The legacy local signing script below is not the isolated hosted path;
+do not use it to bypass the protected workflow.
+
+
 ## Scope and current status
 
 Android application ID: `com.reallyenglish.leafellow`. Initial `versionCode`: 1.
