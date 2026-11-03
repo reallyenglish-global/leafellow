@@ -58,6 +58,14 @@ class ArtifactTest(unittest.TestCase):
         with self.assertRaises(Exception):
             self.check('<manifest')
 
+    def test_alignment_requires_actual_config_field_not_a_token_elsewhere(self):
+        self.assertTrue(artifact.bundle_requests_16kb('{"optimizations":{"uncompressNativeLibraries":{"enabled":true,"alignment":"PAGE_ALIGNMENT_16K"}}}'))
+        for config in ['{}', '[]', '{"compression":{"uncompressedGlob":["PAGE_ALIGNMENT_16K"]}}',
+                       '{"optimizations":{"uncompressNativeLibraries":{"enabled":true,"alignment":"PAGE_ALIGNMENT_4K"}}}',
+                       '{"optimizations":{"uncompressNativeLibraries":{"enabled":false,"alignment":"PAGE_ALIGNMENT_16K"}}}']:
+            with self.subTest(config=config):
+                self.assertFalse(artifact.bundle_requests_16kb(config))
+
     def test_unsigned_input_rejects_existing_signatures(self):
         artifact.check_unsigned_entries(['BundleConfig.pb', 'META-INF/MANIFEST.MF'])
         for name in ['META-INF/DEBUG.RSA', 'META-INF/OLD.SF', 'META-INF/OLD.EC', 'META-INF/old.dsa']:

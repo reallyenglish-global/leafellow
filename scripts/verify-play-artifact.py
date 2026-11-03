@@ -60,6 +60,18 @@ def check_elf(data):
         raise ValueError('ELF library has no load segments')
 
 
+def bundle_requests_16kb(config):
+    data = json.loads(config)
+    if not isinstance(data, dict):
+        return False
+    optimizations = data.get('optimizations')
+    if not isinstance(optimizations, dict):
+        return False
+    native = optimizations.get('uncompressNativeLibraries')
+    return (isinstance(native, dict) and native.get('enabled') is True
+            and native.get('alignment') == 'PAGE_ALIGNMENT_16K')
+
+
 def check_unsigned_entries(names):
     if any(re.fullmatch(r'META-INF/[^/]+\.(SF|RSA|DSA|EC)', name, re.I) for name in names):
         raise ValueError('Unsigned input unexpectedly contains signing metadata')
@@ -97,10 +109,10 @@ def inspect_bundle(bundle, jar, package, code, version, require_unsigned=False):
     if abis and 'arm64-v8a' not in abis:
         raise ValueError('Native bundle is missing arm64-v8a')
     # The Play-generated APKs must also use 16-KB ZIP alignment, not just aligned ELF.
-    if libraries and 'PAGE_ALIGNMENT_16K' not in config:
+    if libraries and not bundle_requests_16kb(config):
         raise ValueError('Bundle config does not request 16-KB APK ZIP alignment')
     result.update(aabSha256=hashlib.sha256(bundle.read_bytes()).hexdigest(), abis=sorted(abis),
-                  elf64LibrariesChecked=libraries, bundleRequests16kbZipAlignment='PAGE_ALIGNMENT_16K' in config)
+                  elf64LibrariesChecked=libraries, bundleRequests16kbZipAlignment=bundle_requests_16kb(config))
     return result, xml, config
 
 
