@@ -37,3 +37,13 @@ class ApkPasswordTest(unittest.TestCase):
             self.assertEqual(good.returncode, 0, good.stderr)
             self.assertTrue((root / 'good.apk').is_file())
             self.assertFalse((root / 'good.apk.idsig').exists())
+            # Distinct env variable names are distinct retriever sources, even for equal values.
+            # This is Wordmine's configuration; unlike reusing one file, it must succeed.
+            env_args = ['java', '-jar', str(JAR), 'sign', '--min-sdk-version', '24',
+                        '--ks', str(root / 'upload.p12'), '--ks-key-alias', 'upload',
+                        '--ks-pass', 'env:TEST_STORE_PASSWORD', '--key-pass', 'env:TEST_KEY_PASSWORD',
+                        '--v4-signing-enabled', 'false', '--out', str(root / 'env.apk'), str(root / 'input.apk')]
+            env = {**os.environ, 'TEST_STORE_PASSWORD': password.read_text().strip(),
+                   'TEST_KEY_PASSWORD': password.read_text().strip()}
+            separate_env = subprocess.run(env_args, env=env, text=True, capture_output=True)
+            self.assertEqual(separate_env.returncode, 0, separate_env.stderr)

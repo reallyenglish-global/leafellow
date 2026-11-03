@@ -1,5 +1,25 @@
 # Android / Google Play preparation
 
+### Credential-free native verification before any signing approval
+
+`android-store-candidate.yml` runs on PRs/manual dispatch and builds the permanent
+Android package as unsigned APK/AAB. It uses **test-only code 1**, never selects a
+Play versionCode, never accesses signing environments/secrets and never uploads to
+Play. Its retained native artifacts include independent actual-AAB manifest/API,
+permission inventory, unsigned-input, native-16-KB and bundle-configuration reports.
+Inspect that exact-head hosted run before approving any later signed build. A green
+preview build under a prototype ID is not equivalent evidence.
+
+Both unsigned build paths explicitly provision build-tools 36 and require the real
+apksigner password regression after provisioning; missing SDK fails rather than
+silently skipping this gate. The regression demonstrates reused one-line password
+file failure, same-password PKCS12 fallback success, and distinct environment-source
+success even for equal password values. Leafellow uses the PKCS12 fallback; Wordmine
+uses distinct password environment variables. A real retained preview APK was also
+re-signed and verified with a disposable key to exercise the corrected command;
+this is crypto integration evidence, not either app's store release or device QA.
+
+
 ## 2026-11-03 readiness update (supersedes hosted workflow notes below)
 
 The manual `Android signed artifacts (build only)` workflow now compiles **unsigned**
